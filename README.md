@@ -1010,4 +1010,8 @@ MIT
   <i>为瓦力多模态交互机器人系统而构建。</i><br><br>
   <b>Determinism over decoration. Stability over spectacle.</b><br>
   <b>工程确定性优先于视觉效果。系统稳定性优先于表面光鲜。</b>
+<<<<<<< HEAD
 </p>
+=======
+</p>
+>>>>>>> b2df865885deb97ab4fd40a498cdefcd29166a1d
