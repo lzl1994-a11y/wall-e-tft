@@ -1,0 +1,18 @@
+{
+  "name": "WallEDisplayCore",
+  "version": "0.1.0",
+  "description": "Reusable panel, text rendering, bitmap font and GIF playback modules for Wall-E-TFT.",
+  "keywords": [
+    "esp32",
+    "st7789",
+    "gc9a01",
+    "display",
+    "gif"
+  ],
+  "frameworks": [
+    "arduino"
+  ],
+  "platforms": [
+    "espressif32"
+  ]
+}

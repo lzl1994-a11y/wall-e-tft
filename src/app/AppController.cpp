@@ -267,7 +267,7 @@ void AppController::begin() {
     logger_.error("display init failed");
   }
   setState(AppState::Booting);
-  session_.addText(ChatRole::System, display_.fontOk() ? "FONT OK" : "FONT ERR");
+  session_.addText(ChatRole::System, display_.fontOk() ? "TEXT OK" : "TEXT ERR");
 
   input_.begin();
   session_.addText(ChatRole::System, "READY");
@@ -283,6 +283,8 @@ void AppController::begin() {
  * @return 无 / None.
  */
 void AppController::loop() {
+  eyeDisplay_.update();
+
   // 中文：每次循环最多处理一条完整输入包，避免一次刷新过久。
   // English: Each loop handles at most one complete packet to avoid long redraw bursts.
   InputPacket packet;

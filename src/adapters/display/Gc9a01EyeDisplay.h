@@ -1,7 +1,7 @@
 #pragma once
 
-#include <AnimatedGIF.h>
-#include <Arduino_GFX_Library.h>
+#include "adapters/display/Gc9a01Panel.h"
+#include "adapters/display/GifPlayer.h"
 #include "ports/IEyeDisplayPort.h"
 
 namespace WallE {
@@ -12,6 +12,12 @@ namespace WallE {
  */
 class Gc9a01EyeDisplay : public IEyeDisplayPort {
  public:
+  /**
+   * 中文：构造眼睛显示适配器，并把项目配置转换为可复用的面板和 GIF 播放配置。
+   * English: Constructs the eye display adapter and converts project settings into reusable panel and GIF playback config.
+   */
+  Gc9a01EyeDisplay();
+
   /**
    * 中文：初始化眼睛屏 SPI、GC9A01 控制器和 GIF 解码器。
    * English: Initializes the eye display SPI bus, GC9A01 controller, and GIF decoder.
@@ -31,37 +37,27 @@ class Gc9a01EyeDisplay : public IEyeDisplayPort {
    */
   void playZoom() override;
 
- private:
-  /// 中文：Arduino_GFX 的 ESP32 SPI 总线对象，由本类创建并复用。
-  /// English: Arduino_GFX ESP32 SPI bus object created and reused by this class.
-  Arduino_ESP32SPI* bus_ = nullptr;
-
-  /// 中文：GC9A01 屏幕对象，用于真正绘制像素。
-  /// English: GC9A01 display object used to draw pixels.
-  Arduino_GC9A01* gfx_ = nullptr;
-
-  /// 中文：AnimatedGIF 解码器实例，用于从 PROGMEM GIF 数据解码帧。
-  /// English: AnimatedGIF decoder instance used to decode frames from PROGMEM GIF data.
-  AnimatedGIF gif_;
-
   /**
-   * 中文：播放内置 GIF 的内部实现；该函数是阻塞式，会播放完整个 GIF 后返回。
-   * English: Internal implementation for playing the embedded GIF; this is blocking and returns after the full GIF finishes.
+   * 中文：推进当前眼睛动画播放状态；用于把 GIF 播放改成非阻塞模式。
+   * English: Advances the current eye animation playback state, enabling non-blocking GIF playback.
    *
    * @param 无 / None.
    * @return 无 / None.
    */
-  void playGif();
+  void update() override;
 
-  /**
-   * 中文：AnimatedGIF 行绘制回调，把解码出的调色板像素写到 GC9A01。
-   * English: AnimatedGIF line-draw callback that writes decoded palette pixels to the GC9A01 display.
-   *
-   * @param pDraw 中文：AnimatedGIF 提供的当前行绘制信息。
-   *              English: Current line drawing information provided by AnimatedGIF.
-   * @return 无 / None.
-   */
-  static void gifDrawCallback(GIFDRAW* pDraw);
+ private:
+  /// 中文：GC9A01 面板驱动，负责屏幕硬件初始化和 Arduino_GFX 对象生命周期。
+  /// English: GC9A01 panel driver responsible for hardware initialization and Arduino_GFX object lifetime.
+  Gc9a01Panel panel_;
+
+  /// 中文：GIF 播放器，负责 AnimatedGIF 解码和逐行推送。
+  /// English: GIF player responsible for AnimatedGIF decoding and line-by-line drawing.
+  GifPlayer gifPlayer_;
+
+  /// 中文：眼睛屏是否已成功初始化。
+  /// English: Whether the eye display has initialized successfully.
+  bool ready_ = false;
 };
 
 }  // namespace WallE

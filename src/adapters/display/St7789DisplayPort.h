@@ -1,8 +1,9 @@
 #pragma once
 
-#include "adapters/display/Gb2312FontFlash.h"
+#include "adapters/display/ScreenFontFlash.h"
+#include "adapters/display/St7789Panel.h"
+#include "adapters/display/TextRenderer.h"
 #include "ports/IDisplayPort.h"
-#include <Arduino_GFX_Library.h>
 
 namespace WallE {
 
@@ -13,8 +14,14 @@ namespace WallE {
 class St7789DisplayPort : public IDisplayPort {
  public:
   /**
-   * 中文：初始化 ST7789 屏幕和外置 GB2312 字库 Flash。
-   * English: Initializes the ST7789 display and the external GB2312 font flash.
+   * 中文：构造主屏适配器，并把项目配置转换为可复用的面板和字库配置。
+   * English: Constructs the main display adapter and converts project settings into reusable panel and font config.
+   */
+  St7789DisplayPort();
+
+  /**
+   * 中文：初始化 ST7789 屏幕和当前选择的文字字模资源。
+   * English: Initializes the ST7789 display and the selected text font resource.
    *
    * @param 无 / None.
    * @return 中文：true 表示屏幕初始化成功；false 表示屏幕初始化失败。
@@ -23,8 +30,8 @@ class St7789DisplayPort : public IDisplayPort {
   bool begin() override;
 
   /**
-   * 中文：返回字库 Flash 签名校验结果。
-   * English: Returns the font flash signature verification result.
+   * 中文：返回当前文字渲染资源是否可用。
+   * English: Returns whether the selected text rendering resource is usable.
    *
    * @param 无 / None.
    * @return 中文：true 表示字库可用；false 表示不可用。
@@ -55,16 +62,6 @@ class St7789DisplayPort : public IDisplayPort {
   void render(const ChatSession& session) override;
 
  private:
-  /**
-   * 中文：初始化主屏硬件、SPI 总线和 ST7789 控制器。
-   * English: Initializes main display hardware, SPI bus, and ST7789 controller.
-   *
-   * @param 无 / None.
-   * @return 中文：true 表示初始化成功；false 表示失败。
-   *         English: true on success; false on failure.
-   */
-  bool initMainDisplay();
-
   /**
    * 中文：绘制红绿蓝彩条自检画面，用于确认屏幕接线和方向。
    * English: Draws an RGB color-bar self-test to verify wiring and orientation.
@@ -109,55 +106,6 @@ class St7789DisplayPort : public IDisplayPort {
    */
   void drawMessage(const ChatMessage& msg, int& y);
 
-  /**
-   * 中文：绘制原始字节文本；ASCII 按 8x16，GB2312 双字节按 16x16 处理。
-   * English: Draws raw byte text; ASCII is treated as 8x16 and GB2312 two-byte text as 16x16.
-   *
-   * @param x 中文：文本起始 x 坐标。
-   *          English: Text start x coordinate.
-   * @param y 中文：文本起始 y 坐标。
-   *          English: Text start y coordinate.
-   * @param data 中文：原始文本字节。
-   *             English: Raw text bytes.
-   * @param len 中文：文本字节长度。
-   *            English: Text byte length.
-   * @param color 中文：文字颜色，RGB565。
-   *              English: Text color in RGB565.
-   * @param bg 中文：背景颜色，RGB565。
-   *           English: Background color in RGB565.
-   * @param maxWidth 中文：允许绘制的最大宽度。
-   *                 English: Maximum drawable width.
-   * @param bottomY 中文：聊天区域底部 y 坐标，超出后停止绘制。
-   *                English: Bottom y coordinate of chat area; drawing stops beyond it.
-   * @param[out] nextY 中文：输出文本绘制后的下一行 y 坐标。
-   *                   English: Output y coordinate after the drawn text.
-   * @return 无 / None.
-   */
-  void drawBytes(int x, int y, const uint8_t* data, size_t len, uint16_t color, uint16_t bg,
-                 int maxWidth, int bottomY, int& nextY);
-
-  /**
-   * 中文：把字库点阵转换为 RGB565 像素并推送到屏幕。
-   * English: Converts a bitmap glyph to RGB565 pixels and pushes it to the display.
-   *
-   * @param x 中文：字形左上角 x 坐标。
-   *          English: Glyph top-left x coordinate.
-   * @param y 中文：字形左上角 y 坐标。
-   *          English: Glyph top-left y coordinate.
-   * @param w 中文：字形宽度，像素。
-   *          English: Glyph width in pixels.
-   * @param h 中文：字形高度，像素。
-   *          English: Glyph height in pixels.
-   * @param bitmap 中文：字库读取到的 1-bit 点阵数据。
-   *               English: 1-bit glyph bitmap read from font flash.
-   * @param color 中文：点亮像素颜色。
-   *              English: Foreground pixel color.
-   * @param bg 中文：未点亮像素背景色。
-   *           English: Background color for unset pixels.
-   * @return 无 / None.
-   */
-  void drawGlyph(int x, int y, int w, int h, const uint8_t* bitmap, uint16_t color,
-                 uint16_t bg);
 
   /**
    * 中文：估算一条消息在聊天区域中占用的高度。
@@ -170,20 +118,6 @@ class St7789DisplayPort : public IDisplayPort {
    */
   int measureMessageHeight(const ChatMessage& msg) const;
 
-  /**
-   * 中文：估算一段原始字节文本自动换行后的高度。
-   * English: Estimates wrapped height for a raw byte text block.
-   *
-   * @param data 中文：原始文本字节。
-   *             English: Raw text bytes.
-   * @param len 中文：文本字节长度。
-   *            English: Text byte length.
-   * @param maxWidth 中文：最大绘制宽度。
-   *                 English: Maximum drawing width.
-   * @return 中文：文本高度，单位像素。
-   *         English: Text height in pixels.
-   */
-  int measureBytesHeight(const uint8_t* data, size_t len, int maxWidth) const;
 
   /**
    * 中文：把 AppState 转为状态栏显示字符串。
@@ -218,20 +152,24 @@ class St7789DisplayPort : public IDisplayPort {
    */
   const char* roleLabel(ChatRole role) const;
 
-  /// 中文：Arduino_GFX 数据总线对象，当前使用硬件 SPI。
-  /// English: Arduino_GFX data bus object, currently hardware SPI.
-  Arduino_DataBus* bus_ = nullptr;
+  /// 中文：ST7789 面板驱动，负责屏幕硬件初始化和 Arduino_GFX 对象生命周期。
+  /// English: ST7789 panel driver responsible for hardware initialization and Arduino_GFX object lifetime.
+  St7789Panel panel_;
 
-  /// 中文：ST7789 屏幕对象，用于实际绘制。
-  /// English: ST7789 display object used for actual drawing.
-  Arduino_ST7789* gfx_ = nullptr;
+  /// 中文：ST7789 通用绘图对象；由 panel_ 持有，这里只缓存指针方便 UI 绘制。
+  /// English: Generic ST7789 drawing object owned by panel_; cached here only for UI drawing.
+  Arduino_GFX* gfx_ = nullptr;
 
-  /// 中文：外置 GB2312 字库 Flash 访问对象。
-  /// English: External GB2312 font flash access object.
-  Gb2312FontFlash font_;
+  /// 中文：屏幕字库 Flash 访问对象；仅配置为 ScreenFontFlash 时启用。
+  /// English: Screen font flash access object; enabled only when configured as ScreenFontFlash.
+  ScreenFontFlash screenFont_;
 
-  /// 中文：字库签名校验是否成功。
-  /// English: Whether font signature verification succeeded.
+  /// 中文：独立文本渲染器，负责字节文本测量、换行和字形绘制。
+  /// English: Dedicated text renderer for byte-text measuring, wrapping, and glyph drawing.
+  TextRenderer textRenderer_;
+
+  /// 中文：当前文字渲染资源是否可用。
+  /// English: Whether the selected text rendering resource is usable.
   bool fontOk_ = false;
 
   /// 中文：固定 UI 框架是否已经绘制，避免每次消息都全屏重画。

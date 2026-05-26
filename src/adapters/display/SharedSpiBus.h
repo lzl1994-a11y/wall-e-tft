@@ -1,37 +1,26 @@
 #pragma once
 
+#include "adapters/display/SpiBusCoordinator.h"
 #include "config/Config.h"
-#include <Arduino.h>
 
 namespace WallE {
 
 /**
- * 中文：如果引脚有效（>=0），把该引脚拉高。
- * English: Drives a pin HIGH when the pin number is valid (>= 0).
+ * 中文：返回本项目的共享 SPI 片选协调器；这里是项目配置到通用 SPI 边界的唯一转换点。
+ * English: Returns the project shared-SPI chip-select coordinator; this is the only adapter from project config to the generic SPI boundary.
  *
- * @param pin 中文：待操作的 GPIO 引脚；小于 0 表示未定义。
- *            English: GPIO pin to drive; negative means undefined.
- * @return 无 / None.
+ * @param 无 / None.
+ * @return 中文：共享 SPI 片选协调器引用。
+ *         English: Reference to the shared-SPI chip-select coordinator.
  */
-inline void setPinHighIfDefined(int pin) {
-  if (pin >= 0) {
-    digitalWrite(pin, HIGH);
-  }
-}
-
-/**
- * 中文：如果片选引脚有效，则配置为 OUTPUT 并默认拉高为未选中状态。
- * English: Configures a valid chip-select pin as OUTPUT and drives it HIGH by default.
- *
- * @param pin 中文：片选 GPIO；小于 0 表示该设备没有片选。
- *            English: Chip-select GPIO; negative means this device has no CS pin.
- * @return 无 / None.
- */
-inline void beginCsPinIfDefined(int pin) {
-  if (pin >= 0) {
-    pinMode(pin, OUTPUT);
-    digitalWrite(pin, HIGH);
-  }
+inline const SpiBusCoordinator& sharedSpiBus() {
+  static const SpiBusCoordinator::Device devices[] = {
+      {WallEConfig::kTftCs, true},
+      {WallEConfig::kScreenFontCs, WallEConfig::kUseScreenFontFlash},
+      {WallEConfig::eysTftCs, WallEConfig::kEnableEyeDisplay},
+  };
+  static const SpiBusCoordinator bus(devices, sizeof(devices) / sizeof(devices[0]));
+  return bus;
 }
 
 /**
@@ -42,9 +31,7 @@ inline void beginCsPinIfDefined(int pin) {
  * @return 无 / None.
  */
 inline void beginSharedSpiCsPins() {
-  beginCsPinIfDefined(WallEConfig::kTftCs);
-  beginCsPinIfDefined(WallEConfig::kFontCs);
-  beginCsPinIfDefined(WallEConfig::eysTftCs);
+  sharedSpiBus().begin();
 }
 
 /**
@@ -55,9 +42,7 @@ inline void beginSharedSpiCsPins() {
  * @return 无 / None.
  */
 inline void deselectSharedSpiDevices() {
-  setPinHighIfDefined(WallEConfig::kTftCs);
-  setPinHighIfDefined(WallEConfig::kFontCs);
-  setPinHighIfDefined(WallEConfig::eysTftCs);
+  sharedSpiBus().deselectAll();
 }
 
 }  // namespace WallE

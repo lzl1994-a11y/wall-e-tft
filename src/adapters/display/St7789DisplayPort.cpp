@@ -76,11 +76,48 @@ constexpr int kPowerThinTopY = 70;
 constexpr int kPowerThinCount = 7;
 constexpr int kPowerThickY = 194;
 constexpr int kPowerThickH = 24;
+
+St7789Panel::Config makeMainPanelConfig() {
+  St7789Panel::Config config;
+  config.dcPin = WallEConfig::kTftDc;
+  config.csPin = WallEConfig::kTftCs;
+  config.sckPin = WallEConfig::kTftSck;
+  config.mosiPin = WallEConfig::kTftMosi;
+  config.misoPin = WallEConfig::kUseScreenFontFlash ? WallEConfig::kTftMiso : GFX_NOT_DEFINED;
+  config.rstPin = WallEConfig::kTftRst;
+  config.width = WallEConfig::kScreenWidth;
+  config.height = WallEConfig::kScreenHeight;
+  config.rotation = 0;
+  config.ips = true;
+  config.colOffset1 = 0;
+  config.rowOffset1 = 0;
+  config.colOffset2 = 0;
+  config.rowOffset2 = 80;
+  config.spiHz = WallEConfig::kTftSpiHz;
+  return config;
+}
+
+ScreenFontFlash::Config makeScreenFontConfig() {
+  ScreenFontFlash::Config config;
+  config.csPin = WallEConfig::kScreenFontCs;
+  config.sckPin = WallEConfig::kTftSck;
+  config.misoPin = WallEConfig::kTftMiso;
+  config.mosiPin = WallEConfig::kTftMosi;
+  config.spiHz = WallEConfig::kScreenFontSpiHz;
+  config.ascii8x16Base = WallEConfig::kScreenFontAscii8x16Base;
+  config.doubleByte16x16Base = WallEConfig::kScreenFontDoubleByte16x16Base;
+  config.doubleByteFirst = WallEConfig::kScreenFontDoubleByteFirst;
+  config.doubleByteColumns = WallEConfig::kScreenFontDoubleByteColumns;
+  return config;
+}
 }  // namespace
 
+St7789DisplayPort::St7789DisplayPort()
+    : panel_(makeMainPanelConfig()), screenFont_(makeScreenFontConfig()) {}
+
 /**
- * 中文：初始化主屏模块；先初始化共享 SPI 片选，再初始化 ST7789 和字库 Flash。
- * English: Initializes the main display module; prepares shared SPI CS pins, then initializes ST7789 and font flash.
+ * 中文：初始化主屏模块；先初始化共享 SPI 片选，再初始化 ST7789 和当前配置的文字资源。
+ * English: Initializes the main display module; prepares shared SPI CS pins, then initializes ST7789 and the configured text resource.
  *
  * @param 无 / None.
  * @return 中文：主屏初始化成功返回 true；ST7789 初始化失败返回 false。
@@ -89,36 +126,12 @@ constexpr int kPowerThickH = 24;
 bool St7789DisplayPort::begin() {
   beginSharedSpiCsPins();
 
-  if (!initMainDisplay()) {
-    return false;
-  }
-
-  font_.begin();
-  fontOk_ = font_.checkSignature();
-  return true;
-}
-
-/**
- * 中文：创建 Arduino_GFX 总线和 ST7789 对象，并按配置频率启动屏幕。
- * English: Creates the Arduino_GFX bus and ST7789 object, then starts the display at the configured SPI frequency.
- *
- * @param 无 / None.
- * @return 中文：屏幕对象创建并 begin() 成功返回 true，否则返回 false。
- *         English: true when objects are created and begin() succeeds; false otherwise.
- */
-bool St7789DisplayPort::initMainDisplay() {
   deselectSharedSpiDevices();
-
-  // 中文：主屏和字库 Flash 共用 SPI 引脚，因此使用同一套硬件 SPI 配置。
-  // English: The main display and font flash share SPI pins, so use the same hardware SPI setup.
-  bus_ = new Arduino_HWSPI(WallEConfig::kTftDc, WallEConfig::kTftCs, WallEConfig::kTftSck,
-                           WallEConfig::kTftMosi, WallEConfig::kTftMiso);
-  gfx_ = new Arduino_ST7789(bus_, WallEConfig::kTftRst, 0, true, WallEConfig::kScreenWidth,
-                            WallEConfig::kScreenHeight, 0, 0, 0, 80);
-  if (bus_ == nullptr || gfx_ == nullptr) {
+  if (!panel_.begin()) {
     return false;
   }
-  if (!gfx_->begin(WallEConfig::kTftSpiHz)) {
+  gfx_ = panel_.gfx();
+  if (gfx_ == nullptr) {
     return false;
   }
 
@@ -127,6 +140,22 @@ bool St7789DisplayPort::initMainDisplay() {
     drawStartupSelfTest();
   }
   deselectSharedSpiDevices();
+
+  textRenderer_.setDisplay(gfx_);
+  textRenderer_.setFontProvider(nullptr);
+  TextRenderer::Config textConfig;
+  textConfig.doubleByteFirst = WallEConfig::kScreenFontDoubleByteFirst;
+  textConfig.doubleByteSecondFirst = WallEConfig::kScreenFontDoubleByteFirst;
+  textRenderer_.setConfig(textConfig);
+  textRenderer_.setPrepareBusCallback(deselectSharedSpiDevices);
+  fontOk_ = true;
+  if (WallEConfig::kUseScreenFontFlash) {
+    const bool screenFontStarted = screenFont_.begin();
+    fontOk_ = screenFontStarted;
+    if (screenFontStarted) {
+      textRenderer_.setFontProvider(&screenFont_);
+    }
+  }
   return true;
 }
 
@@ -404,128 +433,9 @@ void St7789DisplayPort::drawMessage(const ChatMessage& msg, int& y) {
   // 中文：nextY 接收正文绘制后的底部位置，用于放置下一条消息。
   // English: nextY receives the body bottom position and is used to place the next message.
   int nextY = y;
-  drawBytes(kMessageTextLeft, y, msg.data, msg.length, kWhite, kBg, kMessageTextWidth,
-            kChatBottom, nextY);
+  textRenderer_.drawBytes(kMessageTextLeft, y, msg.data, msg.length, kWhite, kBg,
+                          kMessageTextWidth, kChatBottom, nextY);
   y = max(nextY, y + 18) + 4;
-}
-
-/**
- * 中文：按字节绘制 GB2312/ASCII 混合文本，自动换行并裁剪到聊天区域底部。
- * English: Draws mixed GB2312/ASCII byte text with wrapping and clipping to the chat area bottom.
- *
- * @param x 中文：文本区域左上角 x。
- *          English: Top-left x of the text area.
- * @param y 中文：文本区域左上角 y。
- *          English: Top-left y of the text area.
- * @param data 中文：文本原始字节。
- *             English: Raw text bytes.
- * @param len 中文：文本字节长度。
- *            English: Text byte length.
- * @param color 中文：前景颜色。
- *              English: Foreground color.
- * @param bg 中文：背景颜色。
- *           English: Background color.
- * @param maxWidth 中文：文本区域最大宽度。
- *                 English: Maximum text area width.
- * @param bottomY 中文：允许绘制的底部边界。
- *                English: Bottom boundary allowed for drawing.
- * @param[out] nextY 中文：输出绘制后的下一行 y。
- *                   English: Output next y after drawing.
- * @return 无 / None.
- */
-void St7789DisplayPort::drawBytes(int x, int y, const uint8_t* data, size_t len,
-                                  uint16_t color, uint16_t bg, int maxWidth, int bottomY,
-                                  int& nextY) {
-  // 中文：cursorX/cursorY 是当前字形绘制位置。
-  // English: cursorX/cursorY are the draw position of the current glyph.
-  int cursorX = x;
-  int cursorY = y;
-
-  // 中文：bitmap 是从字库 Flash 读取的单个字符点阵缓存。
-  // English: bitmap stores one glyph bitmap read from the font flash.
-  uint8_t bitmap[32] = {0};
-
-  for (size_t i = 0; i < len;) {
-    // 中文：b 是当前待解析字节，可能是 ASCII，也可能是 GB2312 双字节的高字节。
-    // English: b is the current byte, either ASCII or the high byte of a GB2312 two-byte character.
-    const uint8_t b = data[i];
-    if (b == '\r' || b == '\n') {
-      cursorX = x;
-      cursorY += 16;
-      if (cursorY + 16 > bottomY) {
-        break;
-      }
-      ++i;
-      continue;
-    }
-
-    // 中文：GB2312/GBK 中文通常是两个 >=0xA1 的字节；否则按 ASCII 处理。
-    // English: GB2312/GBK Chinese text usually uses two bytes >= 0xA1; otherwise it is treated as ASCII.
-    bool isWord = b >= 0xA1 && i + 1 < len && data[i + 1] >= 0xA1;
-    const int w = isWord ? 16 : 8;
-    if (cursorX != x && cursorX + w > x + maxWidth) {
-      cursorX = x;
-      cursorY += 16;
-      if (cursorY + 16 > bottomY) {
-        break;
-      }
-    }
-
-    if (cursorY + 16 > bottomY) {
-      break;
-    }
-
-    if (isWord) {
-      font_.readWord16(b, data[i + 1], bitmap);
-      drawGlyph(cursorX, cursorY, 16, 16, bitmap, color, bg);
-      i += 2;
-    } else {
-      font_.readAscii16(b, bitmap);
-      drawGlyph(cursorX, cursorY, 8, 16, bitmap, color, bg);
-      i += 1;
-    }
-    cursorX += w;
-  }
-  nextY = min(cursorY + 16, bottomY);
-}
-
-/**
- * 中文：绘制一个 1-bit 点阵字形，支持 8x16 ASCII 和 16x16 汉字。
- * English: Draws one 1-bit bitmap glyph, supporting 8x16 ASCII and 16x16 Chinese glyphs.
- *
- * @param x 中文：绘制位置 x。
- *          English: Draw x coordinate.
- * @param y 中文：绘制位置 y。
- *          English: Draw y coordinate.
- * @param w 中文：字形宽度。
- *          English: Glyph width.
- * @param h 中文：字形高度。
- *          English: Glyph height.
- * @param bitmap 中文：1-bit 点阵数据。
- *               English: 1-bit bitmap data.
- * @param color 中文：点亮像素颜色。
- *              English: Lit pixel color.
- * @param bg 中文：未点亮像素颜色。
- *           English: Unlit pixel color.
- * @return 无 / None.
- */
-void St7789DisplayPort::drawGlyph(int x, int y, int w, int h, const uint8_t* bitmap,
-                                  uint16_t color, uint16_t bg) {
-  // 中文：rowBytes 是每一行点阵占用的字节数。
-  // English: rowBytes is the number of bitmap bytes used by one glyph row.
-  const int rowBytes = (w + 7) / 8;
-
-  // 中文：pixels 是转换后的 RGB565 临时像素块，最大支持 16x16。
-  // English: pixels is the converted RGB565 temporary block, up to 16x16.
-  uint16_t pixels[16 * 16] = {0};
-  for (int row = 0; row < h; ++row) {
-    for (int col = 0; col < w; ++col) {
-      const bool dot = bitmap[row * rowBytes + (col >> 3)] & (0x80 >> (col & 7));
-      pixels[row * w + col] = dot ? color : bg;
-    }
-  }
-  deselectSharedSpiDevices();
-  gfx_->draw16bitRGBBitmap(x, y, pixels, w, h);
 }
 
 /**
@@ -538,56 +448,7 @@ void St7789DisplayPort::drawGlyph(int x, int y, int w, int h, const uint8_t* bit
  *         English: Message height in pixels.
  */
 int St7789DisplayPort::measureMessageHeight(const ChatMessage& msg) const {
-  return max(measureBytesHeight(msg.data, msg.length, kMessageTextWidth), 18) + 4;
-}
-
-/**
- * 中文：仅按字节和宽度估算文本换行高度，不访问屏幕。
- * English: Estimates wrapped text height from bytes and width only, without touching the display.
- *
- * @param data 中文：文本原始字节。
- *             English: Raw text bytes.
- * @param len 中文：字节长度。
- *            English: Byte length.
- * @param maxWidth 中文：最大宽度。
- *                 English: Maximum width.
- * @return 中文：估算高度，单位像素。
- *         English: Estimated height in pixels.
- */
-int St7789DisplayPort::measureBytesHeight(const uint8_t* data, size_t len, int maxWidth) const {
-  if (data == nullptr || len == 0) {
-    return 16;
-  }
-
-  // 中文：cursorX 只用于测量当前行已占宽度，不对应真实屏幕 x 坐标。
-  // English: cursorX only measures the used width on the current line; it is not a real screen x coordinate.
-  int cursorX = 0;
-
-  // 中文：lines 是自动换行后的文本行数。
-  // English: lines is the number of text lines after wrapping.
-  int lines = 1;
-  for (size_t i = 0; i < len;) {
-    // 中文：b 是当前测量字节；测量逻辑必须和 drawBytes() 的字宽规则一致。
-    // English: b is the current byte for measurement; the width rule must match drawBytes().
-    const uint8_t b = data[i];
-    if (b == '\r' || b == '\n') {
-      cursorX = 0;
-      ++lines;
-      ++i;
-      continue;
-    }
-
-    const bool isWord = b >= 0xA1 && i + 1 < len && data[i + 1] >= 0xA1;
-    const int w = isWord ? 16 : 8;
-    if (cursorX != 0 && cursorX + w > maxWidth) {
-      cursorX = 0;
-      ++lines;
-    }
-
-    cursorX += w;
-    i += isWord ? 2 : 1;
-  }
-  return lines * 16;
+  return max(textRenderer_.measureBytesHeight(msg.data, msg.length, kMessageTextWidth), 18) + 4;
 }
 
 /**

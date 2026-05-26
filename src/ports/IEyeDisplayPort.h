@@ -22,6 +22,15 @@ class IEyeDisplayPort {
    * @return 无 / None.
    */
   virtual void playZoom() = 0;
+
+  /**
+   * 中文：推进眼睛动画播放状态；应在主循环中周期性调用。
+   * English: Advances eye animation playback state; call periodically from the main loop.
+   *
+   * @param 无 / None.
+   * @return 无 / None.
+   */
+  virtual void update() = 0;
 };
 
 }  // namespace WallE

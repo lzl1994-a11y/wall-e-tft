@@ -21,13 +21,16 @@
 - Send `ai:` plus one short GBK/GB2312 line through serial with CR/LF.
 - Screen renders the input in the `AI` bubble.
 - Repeated lines scroll through the recent message list.
-- English, numbers, and common GB2312 Chinese characters render from the font flash.
+- With `TextFontSource::ScreenFontFlash`, English, numbers, and common double-byte Chinese glyphs render from the screen font flash.
+- With `TextFontSource::ArduinoGfx`, English and numbers render without MISO/CSF; Chinese bytes are shown as placeholders.
 - Send `openchat:0` to return to the power screen.
 
 ## Eye Action
 
 - Send `eyeaction:zoom`.
 - GC9A01 plays the embedded GIF.
+- While the GIF is playing, send `getname:WHO_ARE_YOU`; Serial should still reply `WALL_E_TFT`.
+- While the GIF is playing, send `power:` or `openchat:`; the main loop should continue processing new commands.
 - ST7789 does not change screens when only an eye action is sent.
 
 ## Failure Cases

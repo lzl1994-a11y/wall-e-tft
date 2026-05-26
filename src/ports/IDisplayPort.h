@@ -28,12 +28,12 @@ class IDisplayPort {
   virtual bool begin() = 0;
 
   /**
-   * 中文：查询外置 GB2312 字库是否通过签名校验。
-   * English: Checks whether the external GB2312 font flash passed signature verification.
+   * 中文：查询当前文字渲染资源是否可用；可能是屏幕字库，也可能是内置 ASCII 字体。
+   * English: Checks whether the current text rendering resource is usable; it may be a screen font or the built-in ASCII font.
    *
    * @param 无 / None.
-   * @return 中文：true 表示字库可用；false 表示字库不可用或校验失败。
-   *         English: true when the font is available; false when missing or verification failed.
+   * @return 中文：true 表示文字渲染资源可用；false 表示必需的字模资源缺失或校验失败。
+   *         English: true when text rendering is available; false when a required glyph source is missing or verification failed.
    */
   virtual bool fontOk() const = 0;
 
