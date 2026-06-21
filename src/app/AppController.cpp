@@ -326,9 +326,28 @@ void AppController::begin() {
   display_.showPower(powerPercent_);
 
   Wire.begin(WallEConfig::kPca9685Sda, WallEConfig::kPca9685Scl);
+  
+  // Initialize PCA9685 (matching MicroPython reference logic)
   Wire.beginTransmission(0x40);
   Wire.write(0x00);
-  Wire.write(0x20); // Enable auto-increment
+  Wire.write(0x10); // Mode 1: Sleep (required to set prescaler)
+  Wire.endTransmission();
+  
+  Wire.beginTransmission(0x40);
+  Wire.write(0xFE); // PRE_SCALE register
+  Wire.write(121);  // 121 for 50Hz (25MHz / 4096 / 50 - 1 = 121)
+  Wire.endTransmission();
+  
+  Wire.beginTransmission(0x40);
+  Wire.write(0x00);
+  Wire.write(0x00); // Wake up
+  Wire.endTransmission();
+  
+  delay(1); // Wait for oscillator to stabilize
+  
+  Wire.beginTransmission(0x40);
+  Wire.write(0x00);
+  Wire.write(0xA1); // Mode 1: RESTART (0x80) | Auto-Increment (0x20) | ALLCALL (0x01)
   Wire.endTransmission();
   
   bootMs_ = millis();
@@ -359,10 +378,12 @@ void AppController::loop() {
       Wire.write(0x06); // Start at LED0_ON_L
       for (int i = 0; i < 15; ++i) {
         int16_t val = (i <= 8) ? 4915 : 0;
+        uint16_t pcaVal = (val <= 0) ? 4096 : (val >> 4); // 0 -> FULL OFF (4096)
+        if (pcaVal > 4095 && pcaVal != 4096) pcaVal = 4095;
         Wire.write(0);
         Wire.write(0);
-        Wire.write(val & 0xFF);
-        Wire.write((val >> 8) & 0xFF);
+        Wire.write(pcaVal & 0xFF);
+        Wire.write((pcaVal >> 8) & 0xFF);
       }
       Wire.endTransmission();
     }
@@ -378,10 +399,13 @@ void AppController::loop() {
       Wire.beginTransmission(0x40);
       Wire.write(0x06); // Start at LED0_ON_L
       for (int i = 0; i < 15; ++i) {
+        int16_t val = values[i];
+        uint16_t pcaVal = (val <= 0) ? 4096 : (val >> 4); // 0 -> FULL OFF (4096)
+        if (pcaVal > 4095 && pcaVal != 4096) pcaVal = 4095;
         Wire.write(0);
         Wire.write(0);
-        Wire.write(values[i] & 0xFF);
-        Wire.write((values[i] >> 8) & 0xFF);
+        Wire.write(pcaVal & 0xFF);
+        Wire.write((pcaVal >> 8) & 0xFF);
       }
       Wire.endTransmission();
     }
