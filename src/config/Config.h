@@ -93,6 +93,11 @@ constexpr int eysTftDc = 5;
 constexpr int eysTftRst = 3;
 constexpr int eysTftCs = 4;
 
+// 中文：PCA9685 舵机驱动板 I2C 引脚（可根据实际硬件连线修改）
+// English: I2C pins for PCA9685 servo driver (modify according to actual wiring)
+constexpr int kPca9685Sda = 1;
+constexpr int kPca9685Scl = 2;
+
 /// 中文：主屏和眼睛屏的逻辑宽度，单位像素。
 /// English: Logical width of both main and eye displays in pixels.
 constexpr int kScreenWidth = 240;

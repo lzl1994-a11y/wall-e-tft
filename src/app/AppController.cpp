@@ -1,5 +1,5 @@
 #include "app/AppController.h"
-
+#include <Wire.h>
 namespace WallE {
 
 namespace {
@@ -233,6 +233,57 @@ bool parseSerialMessage(const InputPacket& packet, ChatRole& role, const uint8_t
   return length > 0;
 }
 
+/**
+ * 中文：解析 pca9685: 逗号分隔的 15 个整数。
+ * English: Parses 15 comma-separated integers following pca9685: prefix.
+ */
+bool parsePca9685(const InputPacket& packet, int16_t* values) {
+  const uint8_t* data = packet.data;
+  size_t length = packet.length;
+  
+  if (!startsWithIgnoreCase(data, length, "pca9685:")) {
+    return false;
+  }
+  
+  data += 8;
+  length -= 8;
+  
+  size_t count = 0;
+  int currentVal = 0;
+  bool inNumber = false;
+  bool isNegative = false;
+  
+  for (size_t i = 0; i <= length; ++i) {
+    char c = (i < length) ? static_cast<char>(data[i]) : ',';
+    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+      continue;
+    }
+    
+    if (c == '-') {
+      if (inNumber) return false;
+      isNegative = true;
+      inNumber = true;
+    } else if (c >= '0' && c <= '9') {
+      currentVal = currentVal * 10 + (c - '0');
+      inNumber = true;
+    } else if (c == ',') {
+      if (!inNumber) return false;
+      if (count < 15) {
+        values[count++] = static_cast<int16_t>(isNegative ? -currentVal : currentVal);
+      } else {
+        return false;
+      }
+      currentVal = 0;
+      inNumber = false;
+      isNegative = false;
+    } else {
+      return false;
+    }
+  }
+  
+  return count == 15;
+}
+
 }  // namespace
 
 /**
@@ -273,6 +324,15 @@ void AppController::begin() {
   session_.addText(ChatRole::System, "READY");
   setState(AppState::Ready);
   display_.showPower(powerPercent_);
+
+  Wire.begin(WallEConfig::kPca9685Sda, WallEConfig::kPca9685Scl);
+  Wire.beginTransmission(0x40);
+  Wire.write(0x00);
+  Wire.write(0x20); // Enable auto-increment
+  Wire.endTransmission();
+  
+  bootMs_ = millis();
+  pca9685Rx_ = false;
 }
 
 /**
@@ -290,7 +350,41 @@ void AppController::loop() {
   InputPacket packet;
   if (!input_.poll(packet)) {
     returnToPowerIfChatIdle();
+    
+    if (!pca9685Rx_ && (millis() - bootMs_ > 5000)) {
+      pca9685Rx_ = true;
+      logger_.info("pca9685: 5s timeout, applying default neutral/stop");
+      
+      Wire.beginTransmission(0x40);
+      Wire.write(0x06); // Start at LED0_ON_L
+      for (int i = 0; i < 15; ++i) {
+        int16_t val = (i <= 8) ? 4915 : 0;
+        Wire.write(0);
+        Wire.write(0);
+        Wire.write(val & 0xFF);
+        Wire.write((val >> 8) & 0xFF);
+      }
+      Wire.endTransmission();
+    }
+    
     delay(10);
+    return;
+  }
+
+  if (startsWithIgnoreCase(packet.data, packet.length, "pca9685:")) {
+    int16_t values[15];
+    if (parsePca9685(packet, values)) {
+      pca9685Rx_ = true;
+      Wire.beginTransmission(0x40);
+      Wire.write(0x06); // Start at LED0_ON_L
+      for (int i = 0; i < 15; ++i) {
+        Wire.write(0);
+        Wire.write(0);
+        Wire.write(values[i] & 0xFF);
+        Wire.write((values[i] >> 8) & 0xFF);
+      }
+      Wire.endTransmission();
+    }
     return;
   }
 

@@ -93,6 +93,9 @@ class AppController {
   ScreenMode screenMode_ = ScreenMode::Power;
   uint8_t powerPercent_ = 0;
   uint32_t lastChatActivityMs_ = 0;
+  
+  bool pca9685Rx_ = false;
+  uint32_t bootMs_ = 0;
 };
 
 }  // namespace WallE
