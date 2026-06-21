@@ -295,7 +295,7 @@ void AppController::loop() {
   }
 
   if (equalsIgnoreCase(packet.data, packet.length, "getname:WHO_ARE_YOU")) {
-    Serial.println("WALL_E_TFT");
+    Serial.println("IAM:WALL_E_TFT");
     return;
   }
 

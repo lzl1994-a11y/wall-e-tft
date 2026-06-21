@@ -668,8 +668,8 @@ pio device monitor --baud 115200
 [INFO] READY
 ```
 
-At this point the host should send `getname:WHO_ARE_YOU` and receive `WALL_E_TFT`.
-此时上位机发送 `getname:WHO_ARE_YOU`，应收到应答 `WALL_E_TFT`。
+At this point the host should send `getname:WHO_ARE_YOU` and receive `IAM:WALL_E_TFT`.
+此时上位机发送 `getname:WHO_ARE_YOU`，应收到应答 `IAM:WALL_E_TFT`。
 
 ---
 
