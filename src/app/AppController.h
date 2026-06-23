@@ -6,6 +6,7 @@
 #include "ports/IDisplayPort.h"
 #include "ports/IInputPort.h"
 #include "ports/ILogger.h"
+#include "ports/IPca9685Port.h"
 
 namespace WallE {
 
@@ -27,9 +28,11 @@ class AppController {
    *                English: Main display port reference, currently ST7789.
    * @param eyeDisplay 中文：眼睛显示端口引用，当前为 GC9A01。
    *                   English: Eye display port reference, currently GC9A01.
+   * @param pca9685 中文：PCA9685 驱动端口引用。
+   *                English: PCA9685 driver port reference.
    */
   AppController(ILogger& logger, IInputPort& input, IDisplayPort& display,
-                IEyeDisplayPort& eyeDisplay);
+                IEyeDisplayPort& eyeDisplay, IPca9685Port& pca9685);
 
   /**
    * 中文：初始化日志、主屏、输入端口和初始会话状态。
@@ -82,6 +85,10 @@ class AppController {
   /// 中文：眼睛显示端口，不拥有对象生命周期。
   /// English: Eye display port; lifetime is owned elsewhere.
   IEyeDisplayPort& eyeDisplay_;
+
+  /// 中文：PCA9685 驱动端口，不拥有对象生命周期。
+  /// English: PCA9685 driver port; lifetime is owned elsewhere.
+  IPca9685Port& pca9685_;
 
   /// 中文：主屏当前会话缓存。
   /// English: Current chat session cache for the main display.

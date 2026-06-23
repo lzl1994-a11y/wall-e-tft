@@ -2,6 +2,7 @@
 #include "adapters/display/St7789DisplayPort.h"
 #include "adapters/input/SerialInputPort.h"
 #include "adapters/log/SerialLogger.h"
+#include "adapters/pca9685/Pca9685Driver.h"
 #include "app/AppController.h"
 #include "config/Config.h"
 
@@ -23,9 +24,13 @@ St7789DisplayPort display;
 /// English: Eye GC9A01 display implementation for eye animations.
 Gc9a01EyeDisplay eyeDisplay;
 
-/// 中文：应用总控制器，连接输入、日志、主屏和眼睛屏。
-/// English: Main application controller that wires input, logger, main display, and eye display.
-AppController controller(logger, input, display, eyeDisplay);
+/// 中文：PCA9685 舵机驱动实现，用于底层 I2C 通信。
+/// English: PCA9685 driver implementation for I2C communication.
+Pca9685Driver pca9685(WallEConfig::kPca9685Sda, WallEConfig::kPca9685Scl);
+
+/// 中文：应用总控制器，连接输入、日志、主屏、眼睛屏和PCA9685。
+/// English: Main application controller that wires input, logger, main display, eye display, and pca9685.
+AppController controller(logger, input, display, eyeDisplay, pca9685);
 
 /**
  * 中文：Arduino 启动入口，初始化可选眼睛屏和应用控制器。
