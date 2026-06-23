@@ -27,12 +27,12 @@ class IPca9685Port {
    * 中文：向 PCA9685 连续写入多个通道的 PWM 值。
    * English: Continuously writes PWM values to multiple PCA9685 channels.
    *
-   * @param values 中文：16位的通道目标值（方法内部自动缩放为12位或执行完全停止）。
-   *               English: 16-bit target values (scaled to 12-bit or executed as full stop internally).
+   * @param values 中文：通道目标值（最高可传65535）。
+   *               English: Target values (up to 65535).
    * @param count 中文：要写入的通道数量。
    *              English: Number of channels to write.
    */
-  virtual void setChannels(const int16_t* values, size_t count) = 0;
+  virtual void setChannels(const int32_t* values, size_t count) = 0;
 };
 
 }  // namespace WallE

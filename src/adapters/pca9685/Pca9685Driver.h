@@ -21,7 +21,7 @@ class Pca9685Driver : public IPca9685Port {
   Pca9685Driver(int sdaPin, int sclPin);
 
   void begin() override;
-  void setChannels(const int16_t* values, size_t count) override;
+  void setChannels(const int32_t* values, size_t count) override;
 
   // 严格参考 MicroPython 实现的基础底层方法
   void reset();

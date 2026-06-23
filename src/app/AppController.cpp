@@ -236,7 +236,7 @@ bool parseSerialMessage(const InputPacket& packet, ChatRole& role, const uint8_t
  * 中文：解析 pca9685: 逗号分隔的 15 个整数。
  * English: Parses 15 comma-separated integers following pca9685: prefix.
  */
-bool parsePca9685(const InputPacket& packet, int16_t* values) {
+bool parsePca9685(const InputPacket& packet, int32_t* values) {
   const uint8_t* data = packet.data;
   size_t length = packet.length;
   
@@ -268,7 +268,7 @@ bool parsePca9685(const InputPacket& packet, int16_t* values) {
     } else if (c == ',') {
       if (!inNumber) return false;
       if (count < 15) {
-        values[count++] = static_cast<int16_t>(isNegative ? -currentVal : currentVal);
+        values[count++] = isNegative ? -currentVal : currentVal;
       } else {
         return false;
       }
@@ -352,7 +352,7 @@ void AppController::loop() {
       pca9685Rx_ = true;
       logger_.info("pca9685: 5s timeout, applying default neutral/stop");
       
-      int16_t defaults[15];
+      int32_t defaults[15];
       for (int i = 0; i < 15; ++i) {
         defaults[i] = (i <= 8) ? 4915 : 0;
       }
@@ -364,7 +364,7 @@ void AppController::loop() {
   }
 
   if (startsWithIgnoreCase(packet.data, packet.length, "pca9685:")) {
-    int16_t values[15];
+    int32_t values[15];
     if (parsePca9685(packet, values)) {
       pca9685Rx_ = true;
       pca9685_.setChannels(values, 15);

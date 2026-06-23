@@ -68,15 +68,15 @@ void Pca9685Driver::duty(uint8_t index, uint16_t value, bool invert) {
   }
 }
 
-void Pca9685Driver::setChannels(const int16_t* values, size_t count) {
+void Pca9685Driver::setChannels(const int32_t* values, size_t count) {
   if (count == 0 || values == nullptr) {
     return;
   }
 
   for (size_t i = 0; i < count; ++i) {
-    int16_t val = values[i];
-    // Host sends 16-bit value (e.g. 4915 for 1.5ms). PCA9685 is 12-bit.
-    uint16_t pcaVal = (val <= 0) ? 0 : (val >> 4); 
+    int32_t val = values[i];
+    // Host sends large value (e.g. 65535 for 100%, 4915 for 1.5ms). PCA9685 is 12-bit.
+    uint16_t pcaVal = (val <= 0) ? 0 : (uint16_t)(val >> 4); 
     duty(i, pcaVal);
   }
 }
