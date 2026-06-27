@@ -352,10 +352,20 @@ void AppController::loop() {
       pca9685Rx_ = true;
       logger_.info("pca9685: 5s timeout, applying default neutral/stop");
       
-      int32_t defaults[15];
-      for (int i = 0; i < 15; ++i) {
-        defaults[i] = (i <= 8) ? 4915 : 0;
-      }
+      // 将用户测出的 12位 PCA9685 初始值左移 4 位 (乘 16) 适配 16-bit 协议
+      int32_t defaults[15] = {
+        1920, // 0: eyebrow_r (120 * 16)
+        8192, // 1: eyebrow_l (512 * 16)
+        2880, // 2: eye_r (180 * 16)
+        7360, // 3: eye_l (460 * 16)
+        4000, // 4: head_yaw (250 * 16)
+        2080, // 5: neck_top (130 * 16)
+        2400, // 6: neck_bottom (150 * 16)
+        2400, // 7: arm_r (150 * 16)
+        7680, // 8: arm_l (480 * 16)
+        0, 0, 0, // 9-11: 左电机
+        0, 0, 0  // 12-14: 右电机
+      };
       pca9685_.setChannels(defaults, 15);
     }
     
