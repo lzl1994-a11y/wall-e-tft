@@ -59,6 +59,13 @@ void GifPlayer::update() {
   }
 
   if (waitingFinalDelay_) {
+    if (config_.loopPlayback && opened_) {
+      prepareBus();
+      gif_.reset();
+      waitingFinalDelay_ = false;
+      nextFrameAtMs_ = now;
+      return;
+    }
     stop();
     return;
   }

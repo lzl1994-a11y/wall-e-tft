@@ -33,6 +33,7 @@ GifPlayer::Config makeEyeGifConfig() {
   config.maxWidth = WallEConfig::kScreenWidth;
   config.clearBeforePlay = true;
   config.clearColor = kBlack;
+  config.loopPlayback = true;
   return config;
 }
 }  // namespace
@@ -41,8 +42,8 @@ Gc9a01EyeDisplay::Gc9a01EyeDisplay()
     : panel_(makeEyePanelConfig()), gifPlayer_(makeEyeGifConfig()) {}
 
 /**
- * 中文：初始化眼睛屏硬件和 GIF 播放器；此处只清屏，不自动播放动画。
- * English: Initializes eye display hardware and GIF player; it only clears the screen and does not auto-play animation.
+ * 中文：初始化眼睛屏硬件和 GIF 播放器，并在上电后自动启动一次眼睛动画。
+ * English: Initializes eye display hardware and GIF player, then automatically starts one eye animation on power-up.
  *
  * @param 无 / None.
  * @return 中文：初始化成功返回 true，面板初始化失败返回 false。
@@ -70,6 +71,8 @@ bool Gc9a01EyeDisplay::begin() {
   gfx->fillScreen(kBlack);
   deselectSharedSpiDevices();
   ready_ = true;
+  playZoom();
+  update();
   return true;
 }
 

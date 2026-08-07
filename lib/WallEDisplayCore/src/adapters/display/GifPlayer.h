@@ -35,6 +35,10 @@ class GifPlayer {
     /// 中文：播放前清屏使用的 RGB565 颜色。
     /// English: RGB565 color used when clearing before playback.
     uint16_t clearColor = 0x0000;
+
+    /// 中文：播放到 GIF 末尾后是否自动回到第一帧继续播放。
+    /// English: Whether playback automatically returns to the first frame after the GIF ends.
+    bool loopPlayback = false;
   };
 
   /**

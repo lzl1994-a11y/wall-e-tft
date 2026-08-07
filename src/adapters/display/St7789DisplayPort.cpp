@@ -87,7 +87,7 @@ St7789Panel::Config makeMainPanelConfig() {
   config.rstPin = WallEConfig::kTftRst;
   config.width = WallEConfig::kScreenWidth;
   config.height = WallEConfig::kScreenHeight;
-  config.rotation = 0;
+  config.rotation = 2;
   config.ips = true;
   config.colOffset1 = 0;
   config.rowOffset1 = 0;
