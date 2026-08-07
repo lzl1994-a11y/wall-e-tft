@@ -40,10 +40,20 @@ AppController controller(logger, input, display, eyeDisplay, pca9685);
  * @return 无 / None.
  */
 void setup() {
+  bool eyeDisplayReady = true;
   if (WallEConfig::kEnableEyeDisplay) {
-    eyeDisplay.begin();
+    eyeDisplayReady = eyeDisplay.begin();
   }
   controller.begin();
+  if (WallEConfig::kEnableEyeDisplay) {
+    if (!eyeDisplayReady) {
+      logger.error("eye display initialization failed");
+    } else if (eyeDisplay.asyncDmaReady()) {
+      logger.info("eye display async DMA ready");
+    } else {
+      logger.warn("eye display using synchronous fallback");
+    }
+  }
 }
 
 /**

@@ -1,14 +1,20 @@
 #include "adapters/pca9685/Pca9685Driver.h"
+#include "config/Config.h"
 #include <Arduino.h>
 #include <Wire.h>
 
 namespace WallE {
 
 Pca9685Driver::Pca9685Driver(int sdaPin, int sclPin)
-    : sdaPin_(sdaPin), sclPin_(sclPin) {}
+    : sdaPin_(sdaPin), sclPin_(sclPin) {
+  for (size_t i = 0; i < kChannelCount; ++i) {
+    lastValues_[i] = UINT16_MAX;
+  }
+}
 
 void Pca9685Driver::begin() {
   Wire.begin(sdaPin_, sclPin_);
+  Wire.setClock(WallEConfig::kPca9685I2cHz);
   reset();
   freq(50.0);
 }
@@ -73,12 +79,70 @@ void Pca9685Driver::setChannels(const int32_t* values, size_t count) {
     return;
   }
 
-  for (size_t i = 0; i < count; ++i) {
-    int32_t val = values[i];
-    // Host sends large value (e.g. 65535 for 100%, 4915 for 1.5ms). PCA9685 is 12-bit.
-    uint16_t pcaVal = (val <= 0) ? 0 : (uint16_t)(val >> 4); 
-    duty(i, pcaVal);
+  const size_t channelCount =
+      (count < kChannelCount) ? count : kChannelCount;
+  uint16_t normalized[kChannelCount];
+  for (size_t i = 0; i < channelCount; ++i) {
+    const int32_t value = values[i];
+    if (value <= 0) {
+      normalized[i] = 0;
+    } else if (value >= 65535) {
+      normalized[i] = 4095;
+    } else {
+      normalized[i] = static_cast<uint16_t>(value >> 4);
+    }
   }
+
+  size_t channel = 0;
+  while (channel < channelCount) {
+    while (channel < channelCount &&
+           normalized[channel] == lastValues_[channel]) {
+      ++channel;
+    }
+    if (channel >= channelCount) {
+      break;
+    }
+
+    const size_t firstChanged = channel;
+    while (channel < channelCount &&
+           normalized[channel] != lastValues_[channel]) {
+      ++channel;
+    }
+    const size_t changedCount = channel - firstChanged;
+    if (writeChannelRange(static_cast<uint8_t>(firstChanged),
+                          &normalized[firstChanged], changedCount)) {
+      for (size_t i = firstChanged; i < channel; ++i) {
+        lastValues_[i] = normalized[i];
+      }
+    }
+  }
+}
+
+bool Pca9685Driver::writeChannelRange(uint8_t firstChannel,
+                                      const uint16_t* values,
+                                      size_t count) {
+  if (values == nullptr || count == 0 ||
+      firstChannel + count > kChannelCount) {
+    return false;
+  }
+
+  Wire.beginTransmission(kPca9685Addr);
+  Wire.write(static_cast<uint8_t>(0x06 + 4 * firstChannel));
+  for (size_t i = 0; i < count; ++i) {
+    uint16_t on = 0;
+    uint16_t off = values[i];
+    if (values[i] == 0) {
+      off = 4096;
+    } else if (values[i] >= 4095) {
+      on = 4096;
+      off = 0;
+    }
+    Wire.write(static_cast<uint8_t>(on));
+    Wire.write(static_cast<uint8_t>(on >> 8));
+    Wire.write(static_cast<uint8_t>(off));
+    Wire.write(static_cast<uint8_t>(off >> 8));
+  }
+  return Wire.endTransmission() == 0;
 }
 
 }  // namespace WallE

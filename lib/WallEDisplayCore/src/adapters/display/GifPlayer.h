@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ports/IAsyncBitmapWriter.h"
+
 #include <AnimatedGIF.h>
 #include <Arduino_GFX_Library.h>
 #include <stddef.h>
@@ -28,6 +30,10 @@ class GifPlayer {
     /// English: Maximum draw width used to clip GIF rows so they do not exceed the display boundary.
     int16_t maxWidth = 240;
 
+    /// 中文：最大绘制高度，用于异步帧画布的边界检查。
+    /// English: Maximum drawing height used to bound the asynchronous frame canvas.
+    int16_t maxHeight = 240;
+
     /// 中文：播放前是否先清屏。
     /// English: Whether to clear the display before playback.
     bool clearBeforePlay = true;
@@ -49,6 +55,7 @@ class GifPlayer {
    *               English: Playback config.
    */
   explicit GifPlayer(const Config& config);
+  ~GifPlayer();
 
   /**
    * 中文：设置绘图目标屏幕；播放器不拥有该对象。
@@ -58,6 +65,8 @@ class GifPlayer {
    *            English: Arduino_GFX display pointer.
    */
   void setDisplay(Arduino_GFX* gfx) { gfx_ = gfx; }
+
+  void setAsyncWriter(IAsyncBitmapWriter* writer) { asyncWriter_ = writer; }
 
   /**
    * 中文：设置总线准备回调；播放器不直接依赖项目的 SPI 片选实现。
@@ -116,6 +125,10 @@ class GifPlayer {
    */
   bool isPlaying() const { return playing_; }
 
+  bool asyncReady() const {
+    return asyncWriter_ != nullptr && frameCanvas_ != nullptr;
+  }
+
  private:
   /**
    * 中文：AnimatedGIF 静态行回调，会转发到当前正在播放的 GifPlayer 实例。
@@ -128,6 +141,11 @@ class GifPlayer {
    * English: Converts one decoded indexed-color GIF line to RGB565 and writes it to the display.
    */
   void drawLine(GIFDRAW* pDraw);
+
+  void drawLineAsync(GIFDRAW* pDraw);
+  bool beginAsyncFrame();
+  bool flushAsyncChunk();
+  void endAsyncFrame();
 
   /**
    * 中文：在访问屏幕前执行可选的总线准备动作。
@@ -142,6 +160,20 @@ class GifPlayer {
   /// 中文：目标屏幕对象，不由播放器释放。
   /// English: Target display object, not owned by the player.
   Arduino_GFX* gfx_ = nullptr;
+
+  IAsyncBitmapWriter* asyncWriter_ = nullptr;
+
+  uint16_t* frameCanvas_ = nullptr;
+  size_t frameCanvasPixels_ = 0;
+
+  uint16_t* chunkBuffer_ = nullptr;
+  size_t chunkBufferIndex_ = 0;
+  int16_t chunkX_ = 0;
+  int16_t chunkY_ = 0;
+  int16_t chunkWidth_ = 0;
+  int16_t chunkRows_ = 0;
+  bool asyncFrameActive_ = false;
+  bool asyncFrameFailed_ = false;
 
   /// 中文：AnimatedGIF 解码器实例。
   /// English: AnimatedGIF decoder instance.

@@ -1,4 +1,5 @@
 #include "app/AppController.h"
+#include <string.h>
 namespace WallE {
 
 namespace {
@@ -330,6 +331,27 @@ void AppController::begin() {
   
   bootMs_ = millis();
   pca9685Rx_ = false;
+
+  uiMessageQueue_ = xQueueCreate(WallEConfig::kUiMessageQueueDepth,
+                                 sizeof(QueuedInputPacket));
+  if (uiMessageQueue_ == nullptr) {
+    logger_.error("control task UI queue allocation failed");
+    return;
+  }
+
+  const BaseType_t taskCreated = xTaskCreatePinnedToCore(
+      controlTaskEntry, "walle_control", WallEConfig::kControlTaskStackBytes,
+      this, WallEConfig::kControlTaskPriority, &controlTaskHandle_,
+      WallEConfig::kControlTaskCore);
+  if (taskCreated != pdPASS) {
+    vQueueDelete(uiMessageQueue_);
+    uiMessageQueue_ = nullptr;
+    controlTaskHandle_ = nullptr;
+    logger_.error("control task creation failed; using loop fallback");
+    return;
+  }
+  controlTaskStarted_ = true;
+  logger_.info("control task started on core 0");
 }
 
 /**
@@ -342,53 +364,32 @@ void AppController::begin() {
 void AppController::loop() {
   eyeDisplay_.update();
 
-  // 中文：每次循环最多处理一条完整输入包，避免一次刷新过久。
-  // English: Each loop handles at most one complete packet to avoid long redraw bursts.
-  InputPacket packet;
-  if (!input_.poll(packet)) {
-    returnToPowerIfChatIdle();
-    
-    if (!pca9685Rx_ && (millis() - bootMs_ > 5000)) {
-      pca9685Rx_ = true;
-      logger_.info("pca9685: 5s timeout, applying default neutral/stop");
-      
-      // 将用户测出的 12位 PCA9685 初始值左移 4 位 (乘 16) 适配 16-bit 协议
-      int32_t defaults[15] = {
-        3000, // 0: eye_r (120 * 16)
-        6500, // 1: eye_l (512 * 16)
-        1920, // 2: eyebrow_r (180 * 16)
-        8000, // 3: eyebrow_l (460 * 16)
-        5000, // 4: head_yaw (250 * 16)
-        5000, // 5: neck_top (130 * 16)
-        4000, // 6: neck_bottom (150 * 16)
-        2000, // 7: arm_l (150 * 16)
-        8000, // 8: arm_r (480 * 16)
-        0, 0, 0, // 9-11: 左电机
-        0, 0, 0  // 12-14: 右电机
-      };
-      pca9685_.setChannels(defaults, 15);
+  QueuedInputPacket queuedPacket;
+  if (controlTaskStarted_) {
+    if (xQueueReceive(uiMessageQueue_, &queuedPacket, 0) == pdTRUE) {
+      InputPacket packet;
+      packet.data = queuedPacket.data;
+      packet.length = queuedPacket.length;
+      processUiPacket(packet);
     }
-    
-    delay(10);
-    return;
+  } else {
+    InputPacket packet;
+    if (input_.poll(packet)) {
+      if (!handleControlPacket(packet)) {
+        processUiPacket(packet);
+      }
+    } else {
+      applyPca9685DefaultsIfNeeded();
+    }
   }
 
-  if (startsWithIgnoreCase(packet.data, packet.length, "pca9685:")) {
-    int32_t values[15];
-    if (parsePca9685(packet, values)) {
-      pca9685Rx_ = true;
-      pca9685_.setChannels(values, 15);
-    }
-    return;
-  }
+  returnToPowerIfChatIdle();
+  delay(1);
+}
 
-  if (equalsIgnoreCase(packet.data, packet.length, "getname:WHO_ARE_YOU")) {
-    Serial.println("IAM:WALL_E_TFT");
-    return;
-  }
+void AppController::processUiPacket(const InputPacket& packet) {
 
   if (state_ != AppState::Ready) {
-    input_.drain();
     logger_.warn("input dropped while not ready");
     return;
   }
@@ -450,6 +451,79 @@ void AppController::loop() {
   session_.add(role, messageData, messageLength);
   display_.render(session_);
   setState(AppState::Ready);
+}
+
+bool AppController::handleControlPacket(const InputPacket& packet) {
+  if (startsWithIgnoreCase(packet.data, packet.length, "pca9685:")) {
+    int32_t values[15];
+    if (parsePca9685(packet, values)) {
+      pca9685Rx_ = true;
+      pca9685_.setChannels(values, 15);
+    }
+    return true;
+  }
+
+  if (equalsIgnoreCase(packet.data, packet.length, "getname:WHO_ARE_YOU")) {
+    Serial.println("IAM:WALL_E_TFT");
+    return true;
+  }
+  return false;
+}
+
+bool AppController::enqueueUiPacket(const InputPacket& packet) {
+  if (uiMessageQueue_ == nullptr || packet.data == nullptr ||
+      packet.length == 0 || packet.length > WallEConfig::kInputMaxBytes) {
+    return false;
+  }
+
+  QueuedInputPacket queuedPacket;
+  queuedPacket.length = static_cast<uint16_t>(packet.length);
+  memcpy(queuedPacket.data, packet.data, packet.length);
+  return xQueueSend(uiMessageQueue_, &queuedPacket, 0) == pdTRUE;
+}
+
+void AppController::applyPca9685DefaultsIfNeeded() {
+  if (pca9685Rx_ || millis() - bootMs_ <= 5000) {
+    return;
+  }
+
+  pca9685Rx_ = true;
+  logger_.info("pca9685: 5s timeout, applying default neutral/stop");
+  const int32_t defaults[15] = {
+      3000, 6500, 1920, 8000, 5000, 5000, 4000, 2000, 8000,
+      0, 0, 0, 0, 0, 0};
+  pca9685_.setChannels(defaults, 15);
+}
+
+void AppController::controlTaskEntry(void* parameter) {
+  AppController* controller = static_cast<AppController*>(parameter);
+  if (controller != nullptr) {
+    controller->runControlTask();
+  }
+  vTaskDelete(nullptr);
+}
+
+void AppController::runControlTask() {
+  for (;;) {
+    bool handledPacket = false;
+    for (uint8_t packetCount = 0; packetCount < 8; ++packetCount) {
+      InputPacket packet;
+      if (!input_.poll(packet)) {
+        break;
+      }
+      handledPacket = true;
+      if (!handleControlPacket(packet)) {
+        enqueueUiPacket(packet);
+      }
+    }
+
+    applyPca9685DefaultsIfNeeded();
+    if (handledPacket) {
+      taskYIELD();
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(1));
+    }
+  }
 }
 
 /**

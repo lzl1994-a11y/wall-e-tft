@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config/Config.h"
 #include "domain/AppState.h"
 #include "domain/ChatSession.h"
 #include "ports/IEyeDisplayPort.h"
@@ -7,6 +8,10 @@
 #include "ports/IInputPort.h"
 #include "ports/ILogger.h"
 #include "ports/IPca9685Port.h"
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 
 namespace WallE {
 
@@ -69,6 +74,17 @@ class AppController {
   void setState(AppState state);
   void setChatOpen(bool open);
   void returnToPowerIfChatIdle();
+  void processUiPacket(const InputPacket& packet);
+  bool handleControlPacket(const InputPacket& packet);
+  bool enqueueUiPacket(const InputPacket& packet);
+  void applyPca9685DefaultsIfNeeded();
+  void runControlTask();
+  static void controlTaskEntry(void* parameter);
+
+  struct QueuedInputPacket {
+    uint16_t length = 0;
+    uint8_t data[WallEConfig::kInputMaxBytes] = {0};
+  };
 
   /// 中文：日志输出端口，不拥有对象生命周期。
   /// English: Logger output port; lifetime is owned elsewhere.
@@ -103,6 +119,9 @@ class AppController {
   
   bool pca9685Rx_ = false;
   uint32_t bootMs_ = 0;
+  QueueHandle_t uiMessageQueue_ = nullptr;
+  TaskHandle_t controlTaskHandle_ = nullptr;
+  bool controlTaskStarted_ = false;
 };
 
 }  // namespace WallE

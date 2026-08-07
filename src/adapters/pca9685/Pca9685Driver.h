@@ -32,10 +32,14 @@ class Pca9685Driver : public IPca9685Port {
  private:
   void write8(uint8_t reg, uint8_t value);
   uint8_t read8(uint8_t reg);
+  bool writeChannelRange(uint8_t firstChannel, const uint16_t* values,
+                         size_t count);
 
   int sdaPin_;
   int sclPin_;
   static constexpr uint8_t kPca9685Addr = 0x40;
+  static constexpr size_t kChannelCount = 16;
+  uint16_t lastValues_[kChannelCount];
 };
 
 }  // namespace WallE

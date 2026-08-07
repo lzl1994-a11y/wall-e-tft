@@ -19,7 +19,7 @@ Gc9a01Panel::Config makeEyePanelConfig() {
   config.misoPin = GFX_NOT_DEFINED;
   config.rstPin = WallEConfig::eysTftRst;
   config.spiHost = HSPI;
-  config.sharedInterface = false;
+  config.sharedInterface = true;
   config.width = WallEConfig::kScreenWidth;
   config.height = WallEConfig::kScreenHeight;
   config.rotation = 0;
@@ -31,6 +31,7 @@ Gc9a01Panel::Config makeEyePanelConfig() {
 GifPlayer::Config makeEyeGifConfig() {
   GifPlayer::Config config;
   config.maxWidth = WallEConfig::kScreenWidth;
+  config.maxHeight = WallEConfig::kScreenHeight;
   config.clearBeforePlay = true;
   config.clearColor = kBlack;
   config.loopPlayback = true;
@@ -64,6 +65,7 @@ bool Gc9a01EyeDisplay::begin() {
   }
 
   gifPlayer_.setDisplay(gfx);
+  gifPlayer_.setAsyncWriter(panel_.asyncWriter());
   gifPlayer_.setPrepareBusCallback(deselectSharedSpiDevices);
   gifPlayer_.begin();
 

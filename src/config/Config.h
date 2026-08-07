@@ -20,6 +20,17 @@ constexpr uint32_t kSerialBaud = 115200;
 /// English: Idle timeout for committing Serial data without a newline.
 constexpr uint32_t kSerialIdleMs = 250;
 
+/// 中文：高优先级串口/PCA9685控制任务参数。
+/// English: High-priority Serial/PCA9685 control task settings.
+constexpr BaseType_t kControlTaskPriority = 4;
+constexpr uint32_t kControlTaskStackBytes = 4096;
+constexpr BaseType_t kControlTaskCore = 0;
+constexpr UBaseType_t kUiMessageQueueDepth = 8;
+
+/// 中文：PCA9685 I2C总线频率；400kHz为Fast Mode。
+/// English: PCA9685 I2C bus speed; 400kHz is I2C Fast Mode.
+constexpr uint32_t kPca9685I2cHz = 400000;
+
 /// 中文：进入聊天界面后，长时间没有 you:/ai: 消息时自动返回电量界面的时间。
 /// English: Idle timeout for returning from chat screen to power screen.
 constexpr uint32_t kChatIdleReturnMs = 30000;

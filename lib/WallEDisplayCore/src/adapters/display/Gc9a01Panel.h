@@ -1,5 +1,7 @@
 #pragma once
 
+#include "adapters/display/Esp32AsyncDmaWriter.h"
+
 #include <Arduino_GFX_Library.h>
 #include <stdint.h>
 
@@ -102,6 +104,10 @@ class Gc9a01Panel {
    */
   Arduino_GFX* gfx() const { return gfx_; }
 
+  IAsyncBitmapWriter* asyncWriter() {
+    return asyncWriter_.ready() ? &asyncWriter_ : nullptr;
+  }
+
   /**
    * 中文：返回面板是否已经成功初始化。
    * English: Returns whether the panel has been initialized successfully.
@@ -118,11 +124,13 @@ class Gc9a01Panel {
 
   /// 中文：Arduino_GFX ESP32 SPI 总线对象，由本驱动创建和持有。
   /// English: Arduino_GFX ESP32 SPI bus object created and owned by this driver.
-  Arduino_ESP32SPI* bus_ = nullptr;
+  Arduino_ESP32SPIDMA* bus_ = nullptr;
 
   /// 中文：Arduino_GFX GC9A01 控制器对象，由本驱动创建和持有。
   /// English: Arduino_GFX GC9A01 controller object created and owned by this driver.
   Arduino_GC9A01* gfx_ = nullptr;
+
+  Esp32AsyncDmaWriter asyncWriter_;
 
   /// 中文：屏幕是否已成功启动。
   /// English: Whether the panel has started successfully.

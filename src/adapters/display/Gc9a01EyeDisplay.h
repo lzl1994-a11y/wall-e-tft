@@ -46,6 +46,8 @@ class Gc9a01EyeDisplay : public IEyeDisplayPort {
    */
   void update() override;
 
+  bool asyncDmaReady() const { return gifPlayer_.asyncReady(); }
+
  private:
   /// 中文：GC9A01 面板驱动，负责屏幕硬件初始化和 Arduino_GFX 对象生命周期。
   /// English: GC9A01 panel driver responsible for hardware initialization and Arduino_GFX object lifetime.

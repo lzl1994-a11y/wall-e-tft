@@ -1,5 +1,7 @@
 #include "adapters/display/GifPlayer.h"
 #include <Arduino.h>
+#include <stdlib.h>
+#include <string.h>
 
 namespace WallE {
 
@@ -15,12 +17,37 @@ GifPlayer* g_activePlayer = nullptr;
 
 GifPlayer::GifPlayer(const Config& config) : config_(config) {}
 
+GifPlayer::~GifPlayer() {
+  stop();
+  free(frameCanvas_);
+  frameCanvas_ = nullptr;
+  frameCanvasPixels_ = 0;
+}
+
 void GifPlayer::begin() {
   gif_.begin(LITTLE_ENDIAN_PIXELS);
   opened_ = false;
   playing_ = false;
   waitingFinalDelay_ = false;
   nextFrameAtMs_ = 0;
+
+  free(frameCanvas_);
+  frameCanvas_ = nullptr;
+  frameCanvasPixels_ = 0;
+  if (asyncWriter_ != nullptr && config_.maxWidth > 0 &&
+      config_.maxHeight > 0) {
+    frameCanvasPixels_ =
+        static_cast<size_t>(config_.maxWidth) * config_.maxHeight;
+    frameCanvas_ = static_cast<uint16_t*>(
+        malloc(frameCanvasPixels_ * sizeof(uint16_t)));
+    if (frameCanvas_ == nullptr) {
+      frameCanvasPixels_ = 0;
+    } else {
+      for (size_t i = 0; i < frameCanvasPixels_; ++i) {
+        frameCanvas_[i] = config_.clearColor;
+      }
+    }
+  }
 }
 
 bool GifPlayer::play(const uint8_t* data, size_t size) {
@@ -34,6 +61,9 @@ bool GifPlayer::play(const uint8_t* data, size_t size) {
   gif_.begin(LITTLE_ENDIAN_PIXELS);
   if (config_.clearBeforePlay) {
     gfx_->fillScreen(config_.clearColor);
+    for (size_t i = 0; i < frameCanvasPixels_; ++i) {
+      frameCanvas_[i] = config_.clearColor;
+    }
   }
 
   opened_ = gif_.open((uint8_t*)data, size, gifDrawCallback);
@@ -70,8 +100,10 @@ void GifPlayer::update() {
     return;
   }
 
+  beginAsyncFrame();
   int frameDelayMs = 0;
   const int result = gif_.playFrame(false, &frameDelayMs, nullptr);
+  endAsyncFrame();
   if (result < 0) {
     stop();
     return;
@@ -88,6 +120,9 @@ void GifPlayer::update() {
 }
 
 void GifPlayer::stop() {
+  if (asyncFrameActive_) {
+    endAsyncFrame();
+  }
   if (opened_) {
     gif_.close();
   }
@@ -110,6 +145,11 @@ void GifPlayer::gifDrawCallback(GIFDRAW* pDraw) {
 
 void GifPlayer::drawLine(GIFDRAW* pDraw) {
   if (gfx_ == nullptr || pDraw == nullptr) {
+    return;
+  }
+
+  if (asyncFrameActive_) {
+    drawLineAsync(pDraw);
     return;
   }
 
@@ -167,6 +207,142 @@ void GifPlayer::drawLine(GIFDRAW* pDraw) {
   }
   prepareBus();
   gfx_->draw16bitRGBBitmap(pDraw->iX, y, lineBuffer, drawWidth, 1);
+}
+
+bool GifPlayer::beginAsyncFrame() {
+  asyncFrameActive_ = false;
+  asyncFrameFailed_ = false;
+  chunkBuffer_ = nullptr;
+  chunkBufferIndex_ = 0;
+  chunkRows_ = 0;
+
+  if (asyncWriter_ == nullptr || frameCanvas_ == nullptr ||
+      frameCanvasPixels_ == 0) {
+    return false;
+  }
+
+  prepareBus();
+  asyncFrameActive_ = asyncWriter_->beginFrame();
+  return asyncFrameActive_;
+}
+
+void GifPlayer::drawLineAsync(GIFDRAW* pDraw) {
+  int16_t y = static_cast<int16_t>(pDraw->iY + pDraw->y);
+  int16_t x = pDraw->iX;
+  int sourceOffset = 0;
+  int drawWidth = pDraw->iWidth;
+
+  if (y < 0 || y >= config_.maxHeight || drawWidth <= 0) {
+    return;
+  }
+  if (x < 0) {
+    sourceOffset = -x;
+    drawWidth -= sourceOffset;
+    x = 0;
+  }
+  if (x >= config_.maxWidth) {
+    return;
+  }
+  if (x + drawWidth > config_.maxWidth) {
+    drawWidth = config_.maxWidth - x;
+  }
+  if (drawWidth <= 0) {
+    return;
+  }
+
+  const uint8_t* source = pDraw->pPixels + sourceOffset;
+  const uint16_t* palette = pDraw->pPalette;
+  uint16_t* canvasLine =
+      frameCanvas_ + static_cast<size_t>(y) * config_.maxWidth + x;
+
+  if (pDraw->ucHasTransparency) {
+    const uint8_t transparent = pDraw->ucTransparent;
+    for (int i = 0; i < drawWidth; ++i) {
+      const uint8_t colorIndex = source[i];
+      if (colorIndex != transparent) {
+        canvasLine[i] = palette[colorIndex];
+      }
+    }
+  } else {
+    for (int i = 0; i < drawWidth; ++i) {
+      canvasLine[i] = palette[source[i]];
+    }
+  }
+
+  const size_t capacity = asyncWriter_->bufferPixelCapacity();
+  const bool contiguous =
+      chunkRows_ > 0 && x == chunkX_ && drawWidth == chunkWidth_ &&
+      y == chunkY_ + chunkRows_ &&
+      static_cast<size_t>(chunkRows_ + 1) * drawWidth <= capacity;
+  if (chunkRows_ > 0 && !contiguous && !flushAsyncChunk()) {
+    asyncFrameFailed_ = true;
+  }
+  if (asyncFrameFailed_) {
+    return;
+  }
+
+  if (chunkRows_ == 0) {
+    if (asyncWriter_->bufferCount() == 0) {
+      asyncFrameFailed_ = true;
+      return;
+    }
+    chunkBufferIndex_ %= asyncWriter_->bufferCount();
+    chunkBuffer_ = asyncWriter_->acquireBuffer(chunkBufferIndex_);
+    if (chunkBuffer_ == nullptr ||
+        static_cast<size_t>(drawWidth) > capacity) {
+      asyncFrameFailed_ = true;
+      return;
+    }
+    chunkX_ = x;
+    chunkY_ = y;
+    chunkWidth_ = static_cast<int16_t>(drawWidth);
+  }
+
+  uint16_t* destination =
+      chunkBuffer_ + static_cast<size_t>(chunkRows_) * chunkWidth_;
+  for (int i = 0; i < drawWidth; ++i) {
+    const uint16_t pixel = canvasLine[i];
+    destination[i] = static_cast<uint16_t>((pixel << 8) | (pixel >> 8));
+  }
+  ++chunkRows_;
+
+  if (static_cast<size_t>(chunkRows_ + 1) * chunkWidth_ > capacity &&
+      !flushAsyncChunk()) {
+    asyncFrameFailed_ = true;
+  }
+}
+
+bool GifPlayer::flushAsyncChunk() {
+  if (chunkRows_ == 0) {
+    return true;
+  }
+  if (chunkBuffer_ == nullptr ||
+      !asyncWriter_->queueRect(
+          chunkBufferIndex_, chunkX_, chunkY_, chunkWidth_, chunkRows_,
+          static_cast<size_t>(chunkWidth_) * chunkRows_)) {
+    chunkRows_ = 0;
+    chunkBuffer_ = nullptr;
+    return false;
+  }
+
+  chunkBufferIndex_ =
+      (chunkBufferIndex_ + 1) % asyncWriter_->bufferCount();
+  chunkRows_ = 0;
+  chunkBuffer_ = nullptr;
+  return true;
+}
+
+void GifPlayer::endAsyncFrame() {
+  if (!asyncFrameActive_) {
+    return;
+  }
+  if (!asyncFrameFailed_ && !flushAsyncChunk()) {
+    asyncFrameFailed_ = true;
+  }
+  asyncWriter_->endFrame();
+  asyncFrameActive_ = false;
+  chunkRows_ = 0;
+  chunkBuffer_ = nullptr;
 }
 
 void GifPlayer::prepareBus() const {

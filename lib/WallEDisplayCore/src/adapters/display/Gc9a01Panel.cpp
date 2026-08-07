@@ -3,9 +3,13 @@
 
 namespace WallE {
 
-Gc9a01Panel::Gc9a01Panel(const Config& config) : config_(config) {}
+Gc9a01Panel::Gc9a01Panel(const Config& config)
+    : config_(config),
+      asyncWriter_(config.dcPin, config.csPin, config.spiHost,
+                   config.spiHz) {}
 
 Gc9a01Panel::~Gc9a01Panel() {
+  asyncWriter_.end();
   delete gfx_;
   delete bus_;
 }
@@ -22,9 +26,9 @@ bool Gc9a01Panel::begin() {
     digitalWrite(config_.csPin, HIGH);
   }
 
-  bus_ = new Arduino_ESP32SPI(config_.dcPin, config_.csPin, config_.sckPin,
-                              config_.mosiPin, config_.misoPin, config_.spiHost,
-                              config_.sharedInterface);
+  bus_ = new Arduino_ESP32SPIDMA(
+      config_.dcPin, config_.csPin, config_.sckPin, config_.mosiPin,
+      config_.misoPin, config_.spiHost, true);
   if (bus_ == nullptr) {
     return false;
   }
@@ -43,7 +47,9 @@ bool Gc9a01Panel::begin() {
     delete bus_;
     gfx_ = nullptr;
     bus_ = nullptr;
+    return false;
   }
+  asyncWriter_.begin();
   return ready_;
 }
 
