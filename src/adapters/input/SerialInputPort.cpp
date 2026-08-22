@@ -1,4 +1,5 @@
 #include "adapters/input/SerialInputPort.h"
+#include "adapters/log/SerialOutput.h"
 
 namespace WallE {
 
@@ -13,7 +14,7 @@ void SerialInputPort::begin() {
   length_ = 0;
   readyLength_ = 0;
   lastRxMs_ = millis();
-  Serial.println("serial input ready: one CR/LF-delimited line is one message");
+  serialPrintln("serial input ready: one CR/LF-delimited line is one message");
 }
 
 /**

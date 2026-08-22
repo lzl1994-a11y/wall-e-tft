@@ -1,122 +1,131 @@
 #!/usr/bin/env python3
-"""No-hardware checks for the WTFT network-configuration codec."""
+"""No-hardware WTFT image and serial NETCFG codec checks."""
 
 from __future__ import annotations
 
-import struct
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import camera_stream_server as wtft  # noqa: E402
+import serial_network_config as netcfg  # noqa: E402
 
 
-def test_set_encoding() -> None:
-    config = wtft.NetworkConfig(
-        (("robot", "secret-1"), ("workshop", "secret-2"), ("", "")),
-        "192.168.4.1", 9000,
-    )
-    payload = wtft.encode_network_config(config)
-    assert payload[:2] == b"\x01\x03"
-    assert b"robot" in payload and b"192.168.4.1" in payload
-    assert struct.unpack("!H", payload[-2:])[0] == 9000
+def expect_value_error(action) -> None:
     try:
-        wtft.encode_network_config(
-            wtft.NetworkConfig((("x" * 33, ""), ("", ""), ("", "")), "host", 1)
-        )
+        action()
     except ValueError:
-        pass
-    else:
-        raise AssertionError("SSID length limit was not enforced")
+        return
+    raise AssertionError("ValueError was not raised")
 
 
-def test_result_and_status() -> None:
-    result = wtft.decode_network_config_result(bytes((1, 0x20, 0, 0)))
-    assert result.operation == 0x20 and result.result == 0
-
-    # version, flags, selected Wi-Fi, three SSID fields, host, port.
-    payload = b"\x01\x03\x01\x05robot\x08workshop\x00\x0b192.168.4.1" + struct.pack("!H", 9000)
-    status = wtft.decode_network_config_status(payload)
-    assert status.active_from_nvs and status.candidate_staged
-    assert status.selected_wifi_index == 1
-    assert status.ssids == ("robot", "workshop", "")
-    assert status.host == "192.168.4.1" and status.port == 9000
-    # The status dataclass and raw wire format expose no password field/value.
-    assert "password" not in status.__dict__
-    assert b"secret" not in payload
-
-
-def test_message_order() -> None:
-    sequence = 17
-    config = wtft.NetworkConfig((("a", "b"), ("", ""), ("", "")), "host", 9000)
-    set_header = wtft.HEADER.pack(wtft.MAGIC, wtft.VERSION, wtft.MSG_NETWORK_CONFIG_SET,
-                                  0, sequence, len(wtft.encode_network_config(config)))
-    apply_header = wtft.HEADER.pack(wtft.MAGIC, wtft.VERSION, wtft.MSG_NETWORK_CONFIG_APPLY,
-                                    0, sequence + 1, 1)
-    assert wtft.HEADER.unpack(set_header)[2] == wtft.MSG_NETWORK_CONFIG_SET
-    assert wtft.HEADER.unpack(apply_header)[2] == wtft.MSG_NETWORK_CONFIG_APPLY
-    # The ESP32 contract is SET -> RESULT(STAGED) -> APPLY -> RESULT(ACCEPTED).
-    assert [wtft.MSG_NETWORK_CONFIG_SET, wtft.MSG_NETWORK_CONFIG_RESULT,
-            wtft.MSG_NETWORK_CONFIG_APPLY, wtft.MSG_NETWORK_CONFIG_RESULT] == [
-                0x20, 0x21, 0x22, 0x21
-            ]
-
-
-class FakeConnection:
-    def __init__(self, responses: list[bytes]) -> None:
-        self.responses = responses
-        self.messages: list[tuple[int, int, bytes]] = []
-        self.sequence = 100
-
-    def next_control_sequence(self) -> int:
-        sequence = self.sequence
-        self.sequence += 1
-        return sequence
-
-    def send_message(self, message_type: int, sequence: int,
-                     payload: bytes = b"") -> None:
-        self.messages.append((message_type, sequence, payload))
-
-    def wait_for_response(self, message_type: int, sequence: int,
-                          timeout: float = 5.0) -> bytes:
-        assert message_type == wtft.MSG_NETWORK_CONFIG_RESULT
-        assert sequence == 123
-        assert timeout > 0
-        return self.responses.pop(0)
-
-
-def test_apply_ack_and_terminal_helpers() -> None:
-    connection = FakeConnection([
-        bytes((1, wtft.MSG_NETWORK_CONFIG_APPLY,
-               wtft.RESULT_APPLY_ACCEPTED, 0)),
-        bytes((1, wtft.MSG_NETWORK_CONFIG_APPLY,
-               wtft.RESULT_TRIAL_CONNECTED_SAVED, 0)),
-    ])
-    ack = wtft.apply_network_config(connection, sequence=123)
-    assert ack.result == wtft.RESULT_APPLY_ACCEPTED
-    assert connection.messages == [
-        (wtft.MSG_NETWORK_CONFIG_APPLY, 123, b"\x01")
-    ]
-    terminal = wtft.wait_for_network_config_terminal(
-        connection, 123, timeout=65.0
+def test_wtft_image_only() -> None:
+    assert wtft.HEADER.size == 16
+    assert {
+        wtft.MSG_HELLO,
+        wtft.MSG_PING,
+        wtft.MSG_PONG,
+        wtft.MSG_STREAM_START,
+        wtft.MSG_JPEG_FRAME,
+        wtft.MSG_STREAM_END,
+    } == {1, 2, 3, 0x10, 0x11, 0x12}
+    assert not any(name.startswith("MSG_NETWORK_") for name in dir(wtft))
+    start = wtft.STREAM_START_PAYLOAD.pack(3000, 3000, 10, 0)
+    assert len(start) == 12
+    assert wtft.STREAM_START_PAYLOAD.unpack(start) == (3000, 3000, 10, 0)
+    header = wtft.HEADER.pack(
+        wtft.MAGIC, wtft.VERSION, wtft.MSG_JPEG_FRAME, 0, 9, 5
     )
-    assert terminal.result == wtft.RESULT_TRIAL_CONNECTED_SAVED
+    assert wtft.HEADER.unpack(header) == (
+        b"WTFT", 1, wtft.MSG_JPEG_FRAME, 0, 9, 5
+    )
+    jpeg = b"\xff\xd8x\xff\xd9"
+    assert jpeg[:2] == b"\xff\xd8" and jpeg[-2:] == b"\xff\xd9"
+    assert wtft.MAX_JPEG_BYTES == 256 * 1024
 
-    invalid = FakeConnection([
-        bytes((1, wtft.MSG_NETWORK_CONFIG_APPLY,
-               wtft.RESULT_APPLY_ACCEPTED, 0)),
-    ])
-    try:
-        wtft.wait_for_network_config_terminal(invalid, 123)
-    except ValueError as exc:
-        assert "non-terminal" in str(exc)
-    else:
-        raise AssertionError("accepted ACK was mistaken for a terminal result")
+
+def test_serial_codec_round_trip() -> None:
+    config = netcfg.NetworkConfig(
+        (("机器人", "秘密"), ("", ""), ("wifi3", "p")),
+        "例子.local",
+        9000,
+    )
+    line = netcfg.encode_set(42, config)
+    assert len(line.encode("ascii")) <= 512
+    assert "秘密" not in line and "秘密" not in repr(config)
+    assert netcfg.encode_apply(7) == "netcfg:apply:7|1"
+    assert netcfg.encode_query(8) == "netcfg:query:8|1"
+
+    encoded_ssid = netcfg.b64url_encode("机器人", 32, "ssid")
+    encoded_host = netcfg.b64url_encode("host", 64, "host")
+    status = netcfg.decode_line(
+        f"NETCFG:STATUS:8|1|0|255|{encoded_ssid}|||{encoded_host}|9000"
+    )
+    assert status.ssids == ("机器人", "", "")
+    assert status.host == "host" and status.port == 9000
+    assert "password" not in status.__dict__
+
+    inactive = netcfg.decode_line("NETCFG:STATUS:9|1|0|255|||||0")
+    assert inactive.host == "" and inactive.port == 0
+    assert inactive.selected == 255
+
+    accepted = netcfg.decode_line("NETCFG:RESULT:9|APPLY|1|0")
+    assert not accepted.terminal
+    for result in (2, 5, 6):
+        assert netcfg.decode_line(
+            f"NETCFG:RESULT:9|APPLY|{result}|0"
+        ).terminal
+
+
+def test_serial_boundaries_and_rejections() -> None:
+    maximum = netcfg.NetworkConfig(
+        (("s" * 32, "p" * 64),) * 3,
+        "h" * 64,
+        65535,
+    )
+    maximum_line = netcfg.encode_set(0xFFFFFFFF, maximum)
+    assert len(maximum_line.encode("ascii")) <= 512
+
+    invalid_configs = (
+        netcfg.NetworkConfig((("s" * 33, ""), ("", ""), ("", "")), "h", 1),
+        netcfg.NetworkConfig((("s", "p" * 65), ("", ""), ("", "")), "h", 1),
+        netcfg.NetworkConfig((("s", ""), ("", ""), ("", "")), "h" * 65, 1),
+        netcfg.NetworkConfig((("s", ""), ("", ""), ("", "")), "h", 0),
+        netcfg.NetworkConfig((("s", ""), ("", ""), ("", "")), "h", 65536),
+        netcfg.NetworkConfig((("", ""), ("", ""), ("", "")), "h", 1),
+    )
+    for config in invalid_configs:
+        expect_value_error(lambda config=config: netcfg.encode_set(1, config))
+
+    # Eleven three-byte characters exceed the 32-byte SSID wire limit.
+    expect_value_error(
+        lambda: netcfg.encode_set(
+            1,
+            netcfg.NetworkConfig(
+                (("机" * 11, ""), ("", ""), ("", "")), "h", 1
+            ),
+        )
+    )
+    expect_value_error(lambda: netcfg.encode_apply(-1))
+    expect_value_error(lambda: netcfg.encode_query(0x1_0000_0000))
+
+    for bad in ("=", "A", "!!!", "Zh"):
+        expect_value_error(lambda bad=bad: netcfg.b64url_decode(bad, 32, "x"))
+    encoded_safe = netcfg.b64url_encode("safe", 32, "x")
+    assert netcfg.b64url_decode(encoded_safe, 32, "x") == "safe"
+    expect_value_error(
+        lambda: netcfg.b64url_decode("AA", 32, "control character")
+    )
+    expect_value_error(
+        lambda: netcfg.decode_line("NETCFG:RESULT:9|APPLY|7|0")
+    )
+    expect_value_error(
+        lambda: netcfg.decode_line("NETCFG:STATUS:9|1|0|3|||||0")
+    )
 
 
 if __name__ == "__main__":
-    test_set_encoding()
-    test_result_and_status()
-    test_message_order()
-    test_apply_ack_and_terminal_helpers()
-    print("WTFT network configuration protocol tests passed")
+    test_wtft_image_only()
+    test_serial_codec_round_trip()
+    test_serial_boundaries_and_rejections()
+    print("WTFT image and serial NETCFG tests passed")

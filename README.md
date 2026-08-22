@@ -450,7 +450,7 @@ Host / 上位机 (RDK X3)           ESP32-S3
 - 无前缀的消息默认按 `you:`（用户角色）处理 / Unprefixed messages default to `you:` role.
 - 数字参数独立解析，支持前导空格和制表符 / Numeric params parsed independently, leading whitespace tolerated.
 - 中文由上位机编码为 GBK/GB2312 字节流发送，固件不做 UTF-8 转换 / Chinese text is GBK/GB2312-encoded by the host; firmware does no UTF-8 conversion.
-- 除设备发现外，串口命令不返回应用层 ACK；上位机应限速发送 / Commands other than discovery have no application-level ACK; the host should pace writes.
+- `NETCFG` 配置命令有结构化 ACK/终态响应；其他控制命令除设备发现外没有应用层 ACK，上位机应限速发送 / `NETCFG` has structured ACK/terminal responses; other control commands except discovery have no application-level ACK, so the host should pace writes.
 
 ### Current Limitations / 当前局限
 
@@ -648,9 +648,9 @@ copy src\config\Secrets.example.h src\config\Secrets.h
 #define WALLE_IMAGE_SERVER_PORT 9000
 ```
 
-三组网络按 1 → 2 → 3 的顺序轮询；每组等待 `kWifiReconnectMs`（默认5秒）后才切换下一组。SSID 为空的组会被跳过；三组都为空时，固件会正常运行原有串口/显示功能，但不会启动图像网络任务。完整协议和上位机接入方法见 [`docs/camera-stream.md`](docs/camera-stream.md)。
+三组网络按 1 → 2 → 3 的顺序轮询；每组等待 `kWifiReconnectMs`（默认5秒）后才切换下一组。SSID 为空的组会被跳过。没有有效 NVS/Secrets 配置时，网络任务仍会运行并等待 USB 串口的晚配置，串口、显示和 PCA9685 不受影响。
 
-上位机可通过既有 WTFT TCP 长连接下发完整的三组 Wi-Fi 与图像信号源地址/端口。新配置先在 RAM 暂存；`APPLY` ACK 发出 500 ms 后才切换。仅在新 Wi-Fi 与新 TCP 信号源在 60 秒内都接通时写入 active NVS；失败或试运行掉电均回到旧 active 配置。查询只返回 SSID、信号源地址和端口，绝不返回密码。详见 [`docs/camera-stream.md`](docs/camera-stream.md#online-network-configuration)。
+运行时网络配置**只走 USB 串口**，因此错误 Wi-Fi 或 TCP 不可达时也始终可救援：`netcfg:set:<seq>|1|...` 暂存候选，`netcfg:apply:<seq>|1` 在完整输出 accepted ACK 后 500 ms 切换，最多试运行 60 秒；完成 Wi-Fi、TCP 和 HELLO 后才写 NVS。成功为结果 2，NVS 错误为 5，失败回滚为 6。`netcfg:query` 从不返回密码。WTFT TCP 只传 HELLO/PING/PONG 和 JPEG 预览，绝不含配置 API。完整语法、上位机 codec 与真机检查见 [`docs/camera-stream.md`](docs/camera-stream.md) 和 [`docs/manual-test.md`](docs/manual-test.md)。
 
 ---
 
@@ -997,7 +997,7 @@ if __name__ == "__main__":
 - [x] Ports-Adapters layered architecture (DI, core library zero-coupling) / 端口-适配器分层架构
 - [x] SPI chip-select coordinator (SpiBusCoordinator table-driven) / SPI 片选协调器
 - [x] Persistent Wi-Fi/TCP client with PSRAM JPEG slots / Wi-Fi 热备与 JPEG 双缓冲
-- [x] Online Wi-Fi/signal-server configuration with safe NVS rollback / 在线网络配置与 NVS 回滚
+- [x] Serial Wi-Fi/signal-server configuration with safe NVS rollback / 串口网络配置与 NVS 回滚
 - [x] 3-second camera preview + 3-second final-frame hold / 三秒预览与末帧保持
 - [x] Background Serial/PCA9685 and image-network tasks / 控制与图像网络后台任务
 - [x] Manual test checklist (6 categories) / 手动测试清单

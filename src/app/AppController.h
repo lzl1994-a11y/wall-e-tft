@@ -7,6 +7,7 @@
 #include "ports/IDisplayPort.h"
 #include "ports/IInputPort.h"
 #include "ports/IImageStreamPort.h"
+#include "ports/INetworkConfigPort.h"
 #include "ports/ILogger.h"
 #include "ports/IPca9685Port.h"
 
@@ -39,7 +40,7 @@ class AppController {
    */
   AppController(ILogger& logger, IInputPort& input, IDisplayPort& display,
                 IEyeDisplayPort& eyeDisplay, IPca9685Port& pca9685,
-                IImageStreamPort& imageStream);
+                IImageStreamPort& imageStream, INetworkConfigPort& networkConfig);
 
   /**
    * 中文：初始化日志、主屏、输入端口和初始会话状态。
@@ -117,6 +118,7 @@ class AppController {
 
   /// Persistent Wi-Fi/TCP JPEG input running in a background task.
   IImageStreamPort& imageStream_;
+  INetworkConfigPort& networkConfig_;
 
   /// 中文：主屏当前会话缓存。
   /// English: Current chat session cache for the main display.

@@ -37,7 +37,11 @@ struct NetworkConfigData {
 /** Active configuration persistence. Candidates deliberately never enter NVS. */
 class NetworkConfigStore {
  public:
-  bool load(const NetworkConfigData& defaults);
+  enum class LoadResult : uint8_t { Loaded, NoActive, Error };
+
+  // NoActive means Preferences was readable but neither NVS nor defaults had
+  // a usable configuration. It is not a boot failure: serial rescue remains.
+  LoadResult load(const NetworkConfigData& defaults);
   bool saveActive(const NetworkConfigData& config);
 
   const NetworkConfigData& active() const { return active_; }

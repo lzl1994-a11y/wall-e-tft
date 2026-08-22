@@ -37,6 +37,28 @@ bool validText(const char* value, size_t maximum, bool required) {
       return false;
     }
   }
+  // Strict UTF-8 validation keeps byte limits unambiguous and rejects broken
+  // serial input before it can reach WiFi.begin().
+  for (size_t index = 0; index < length;) {
+    const uint8_t first = static_cast<uint8_t>(value[index]);
+    size_t extra = 0;
+    uint32_t codepoint = 0;
+    if (first < 0x80) { ++index; continue; }
+    if (first >= 0xC2 && first <= 0xDF) { extra = 1; codepoint = first & 0x1F; }
+    else if (first >= 0xE0 && first <= 0xEF) { extra = 2; codepoint = first & 0x0F; }
+    else if (first >= 0xF0 && first <= 0xF4) { extra = 3; codepoint = first & 0x07; }
+    else return false;
+    if (index + extra >= length) return false;
+    for (size_t next = 1; next <= extra; ++next) {
+      const uint8_t byte = static_cast<uint8_t>(value[index + next]);
+      if ((byte & 0xC0) != 0x80) return false;
+      codepoint = (codepoint << 6) | (byte & 0x3F);
+    }
+    if ((extra == 2 && codepoint < 0x800) ||
+        (extra == 3 && codepoint < 0x10000) ||
+        (codepoint >= 0xD800 && codepoint <= 0xDFFF) || codepoint > 0x10FFFF) return false;
+    index += extra + 1;
+  }
   return true;
 }
 }  // namespace
@@ -92,31 +114,40 @@ bool NetworkConfigData::valid() const {
   return true;
 }
 
-bool NetworkConfigStore::load(const NetworkConfigData& defaults) {
+NetworkConfigStore::LoadResult NetworkConfigStore::load(
+    const NetworkConfigData& defaults) {
   active_ = NetworkConfigData{};
   activeFromNvs_ = false;
 
   Preferences preferences;
-  if (preferences.begin(kNvsNamespace, true)) {
-    NetworkConfigData saved;
-    const size_t size = preferences.getBytesLength(kActiveKey);
-    const size_t read = size == sizeof(saved)
-                            ? preferences.getBytes(kActiveKey, &saved,
-                                                   sizeof(saved))
-                            : 0;
-    preferences.end();
-    if (read == sizeof(saved) && saved.valid()) {
-      active_ = saved;
-      activeFromNvs_ = true;
-      return true;
+  if (!preferences.begin(kNvsNamespace, true)) {
+    // A read-only open also fails on a factory-fresh device because the
+    // namespace does not exist yet. That is a normal provisioning state, not
+    // a reason to disable the serial rescue path.
+    if (defaults.valid()) {
+      active_ = defaults;
+      return LoadResult::Loaded;
     }
+    return LoadResult::NoActive;
+  }
+  NetworkConfigData saved;
+  const size_t size = preferences.getBytesLength(kActiveKey);
+  const size_t read = size == sizeof(saved)
+                          ? preferences.getBytes(kActiveKey, &saved,
+                                                 sizeof(saved))
+                          : 0;
+  preferences.end();
+  if (read == sizeof(saved) && saved.valid()) {
+    active_ = saved;
+    activeFromNvs_ = true;
+    return LoadResult::Loaded;
   }
 
-  if (!defaults.valid()) {
-    return false;
+  if (defaults.valid()) {
+    active_ = defaults;
+    return LoadResult::Loaded;
   }
-  active_ = defaults;
-  return true;
+  return LoadResult::NoActive;
 }
 
 bool NetworkConfigStore::saveActive(const NetworkConfigData& config) {

@@ -2,6 +2,7 @@
 
 #include "adapters/network/NetworkConfigStore.h"
 #include "ports/IImageStreamPort.h"
+#include "ports/INetworkConfigPort.h"
 
 #include <WiFi.h>
 #include <freertos/FreeRTOS.h>
@@ -14,7 +15,8 @@ namespace WallE {
  * Persistent TCP client for length-prefixed JPEG camera frames.
  * Compressed frame slots live in PSRAM; only pointers cross into the UI task.
  */
-class WifiImageStreamClient final : public IImageStreamPort {
+class WifiImageStreamClient final : public IImageStreamPort,
+                                    public INetworkConfigPort {
  public:
   struct Config {
     NetworkConfigData defaultNetworkConfig;
@@ -35,11 +37,15 @@ class WifiImageStreamClient final : public IImageStreamPort {
   bool poll(ImageStreamEvent& event) override;
   void releaseFrame(uint8_t frameToken) override;
   bool connected() const override { return connected_; }
+  bool handleSerialCommand(const uint8_t* data, size_t length, char* response,
+                           size_t capacity, bool& applyAccepted) override;
+  void acknowledgeApplyOutput() override;
+  bool pollSerialResponse(char* response, size_t capacity) override;
 
  private:
   static constexpr size_t kHeaderBytes = 16;
   static constexpr size_t kFrameSlotCount = 2;
-  static constexpr size_t kControlPayloadBytes = 512;
+  static constexpr size_t kControlPayloadBytes = 16;
 
   enum class MessageType : uint8_t {
     Hello = 0x01,
@@ -48,11 +54,6 @@ class WifiImageStreamClient final : public IImageStreamPort {
     StreamStart = 0x10,
     JpegFrame = 0x11,
     StreamEnd = 0x12,
-    NetworkConfigSet = 0x20,
-    NetworkConfigResult = 0x21,
-    NetworkConfigApply = 0x22,
-    NetworkConfigQuery = 0x23,
-    NetworkConfigStatus = 0x24,
   };
 
   enum class ConfigResult : uint8_t {
@@ -82,7 +83,7 @@ class WifiImageStreamClient final : public IImageStreamPort {
   void run();
   static void taskEntry(void* parameter);
   void serviceWifi();
-  void serviceTrial(uint32_t now);
+  bool serviceTrial(uint32_t now);
   bool hasConfiguredNetwork() const;
   bool startNextWifiConnection();
   void serviceTcp();
@@ -102,12 +103,9 @@ class WifiImageStreamClient final : public IImageStreamPort {
   static uint32_t readU32(const uint8_t* data);
   static void writeU16(uint8_t* data, uint16_t value);
   static void writeU32(uint8_t* data, uint32_t value);
-  const NetworkConfigData& workingNetworkConfig() const;
-  bool parseNetworkConfigSet(NetworkConfigData& destination,
-                             uint8_t& validationDetail) const;
-  size_t writeNetworkStatus(uint8_t* destination, size_t capacity) const;
-  bool sendConfigResult(uint32_t sequence, MessageType operation,
-                        ConfigResult result, uint8_t detail = 0);
+  NetworkConfigData workingNetworkConfig() const;
+  void queueSerialResult(uint32_t sequence, ConfigResult result,
+                         uint8_t detail = 0);
   void startTrial();
   void finishTrialSuccess();
   void finishTrialFailure(
@@ -116,6 +114,7 @@ class WifiImageStreamClient final : public IImageStreamPort {
   Config config_;
   NetworkConfigStore networkConfigStore_;
   NetworkConfigData activeNetworkConfig_;
+  bool activeFromNvs_ = false;
   NetworkConfigData candidateNetworkConfig_;
   bool candidatePresent_ = false;
   bool trialPending_ = false;
@@ -123,8 +122,8 @@ class WifiImageStreamClient final : public IImageStreamPort {
   uint32_t trialStartAtMs_ = 0;
   uint32_t trialDeadlineMs_ = 0;
   uint32_t trialSequence_ = 0;
-  bool pendingTrialResult_ = false;
-  ConfigResult pendingTrialResultCode_ = ConfigResult::TrialFailedRestored;
+  mutable portMUX_TYPE networkConfigMux_ = portMUX_INITIALIZER_UNLOCKED;
+  QueueHandle_t serialResponseQueue_ = nullptr;
   WiFiClient client_;
   QueueHandle_t eventQueue_ = nullptr;
   TaskHandle_t taskHandle_ = nullptr;

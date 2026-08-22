@@ -52,7 +52,7 @@ WifiImageStreamClient imageStream(makeImageStreamConfig());
 /// 中文：应用总控制器，连接输入、日志、主屏、眼睛屏和PCA9685。
 /// English: Main application controller that wires input, logger, main display, eye display, and pca9685.
 AppController controller(logger, input, display, eyeDisplay, pca9685,
-                         imageStream);
+                         imageStream, imageStream);
 
 /**
  * 中文：Arduino 启动入口，初始化可选眼睛屏和应用控制器。

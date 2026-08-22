@@ -5,7 +5,7 @@
 - Serial monitor shows `Wall-E Arduino serial display boot`.
 - ST7789 shows the red/green/blue self-test and then stays on the power screen.
 - GC9A01 eye screen initializes without snow or random pixels.
-- Send `getname:WHO_ARE_YOU`; Serial replies `WALL_E_TFT`.
+- Send `getname:WHO_ARE_YOU`; Serial replies `IAM:WALL_E_TFT`.
 
 ## Power Screen
 
@@ -29,7 +29,7 @@
 
 - Send `eyeaction:zoom`.
 - GC9A01 plays the embedded GIF.
-- While the GIF is playing, send `getname:WHO_ARE_YOU`; Serial should still reply `WALL_E_TFT`.
+- While the GIF is playing, send `getname:WHO_ARE_YOU`; Serial should still reply `IAM:WALL_E_TFT`.
 - While the GIF is playing, send `power:` or `openchat:`; the main loop should continue processing new commands.
 - ST7789 does not change screens when only an eye action is sent.
 
@@ -49,21 +49,26 @@
 - Send an oversized, truncated, progressive, or non-240×240 JPEG; it is
   rejected without accessing memory outside the frame slots.
 
-## Online Network Configuration
+## Serial Network Configuration and Recovery
 
-- Query the active configuration and confirm only SSIDs, host and port are
-  returned; no password appears in the console or capture.
-- SET a candidate with the first SSID empty and a valid second SSID. Verify
-  result `0` (staged) and that no Wi-Fi switch happens before APPLY.
-- APPLY it; verify result `1` arrives before the old TCP connection drops.
-- Verify the candidate connects within 60 seconds, result `2` is delivered to
-  the new server, and the configuration remains active after a reboot.
-- After a valid NVS configuration has been saved, build once without local
-  `Secrets.h`; verify the device still loads NVS and reconnects normally.
-- Apply deliberately invalid credentials; verify the original Wi-Fi/server is
-  restored and result `6` is delivered after reconnecting it.
-- Cut power during the 60-second trial; after boot, verify old active NVS
-  settings still apply.
+- Boot once with no valid `Secrets.h` Wi-Fi entries and no NVS config. Verify
+  serial, screens, and PCA9685 remain usable; `netcfg:query:1|1` reports port
+  `0`, then send a Base64url `netcfg:set` and confirm result `SET|0|0`.
+- Send `netcfg:apply:2|1`. Verify serial result `APPLY|1|0` is complete before
+  Wi-Fi/image traffic stops, then within 60 seconds get exactly one terminal
+  `APPLY|2|0`; reboot and confirm NVS persists it.
+- Configure an empty first slot and a valid second slot; QUERY must show the
+  three Base64url SSIDs, selected slot, host and port but never a password.
+- Apply deliberately wrong credentials or an unreachable server. Verify the
+  old active connection returns and serial emits terminal `APPLY|6|0`; when
+  there was no old active config, verify it stays ready for another serial SET.
+- Simulate NVS write failure if practical and verify result `APPLY|5|0` and
+  rollback. Cut power during a trial and verify the prior NVS active config is
+  still used on next boot.
+- During a switch, send QUERY and verify busy flag bit 2; SET/APPLY must be
+  rejected. Confirm no partial/interleaved NETCFG serial lines under logging.
+- Confirm TCP accepts only image/keepalive messages; its server has no network
+  configuration flags or APIs.
 
 ## Failure Cases
 
@@ -74,7 +79,8 @@
 ## Architecture Red Lines
 
 - Network details stay inside `WifiImageStreamClient`; `AppController` depends
-  only on `IImageStreamPort`.
+  only on `IImageStreamPort` and the abstract `INetworkConfigPort`, never
+  directly on Wi-Fi or Preferences.
 - No model client is referenced by firmware.
 - `AppController` does not include display driver headers.
 - Display code does not include network or API configuration.

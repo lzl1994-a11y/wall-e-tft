@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config/Config.h"
+#include "adapters/log/SerialOutput.h"
 #include "ports/ILogger.h"
 #include <Arduino.h>
 
@@ -66,10 +67,7 @@ class SerialLogger : public ILogger {
    * @return 无 / None.
    */
   void log(const char* level, const char* message) {
-    Serial.print('[');
-    Serial.print(level);
-    Serial.print("] ");
-    Serial.println(message);
+    serialLogLine(level, message);
   }
 };
 

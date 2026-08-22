@@ -1,4 +1,5 @@
 #include "app/AppController.h"
+#include "adapters/log/SerialOutput.h"
 #include <stdio.h>
 #include <string.h>
 namespace WallE {
@@ -304,13 +305,15 @@ bool parsePca9685(const InputPacket& packet, int32_t* values) {
  */
 AppController::AppController(ILogger& logger, IInputPort& input, IDisplayPort& display,
                              IEyeDisplayPort& eyeDisplay, IPca9685Port& pca9685,
-                             IImageStreamPort& imageStream)
+                             IImageStreamPort& imageStream,
+                             INetworkConfigPort& networkConfig)
     : logger_(logger),
       input_(input),
       display_(display),
       eyeDisplay_(eyeDisplay),
       pca9685_(pca9685),
-      imageStream_(imageStream) {}
+      imageStream_(imageStream),
+      networkConfig_(networkConfig) {}
 
 /**
  * 中文：启动应用；初始化日志、主屏、输入端口，并在主屏显示 READY 状态。
@@ -399,9 +402,21 @@ void AppController::loop() {
       processUiPacket(packet);
     }
   } else {
+    char networkResponse[512] = {0};
+    while (networkConfig_.pollSerialResponse(networkResponse,
+                                             sizeof(networkResponse))) {
+      serialPrintln(networkResponse);
+    }
     InputPacket packet;
     if (input_.poll(packet)) {
-      if (!handleControlPacket(packet)) {
+      bool applyAccepted = false;
+      if (networkConfig_.handleSerialCommand(packet.data, packet.length,
+                                             networkResponse,
+                                             sizeof(networkResponse),
+                                             applyAccepted)) {
+        serialPrintln(networkResponse);
+        if (applyAccepted) networkConfig_.acknowledgeApplyOutput();
+      } else if (!handleControlPacket(packet)) {
         processUiPacket(packet);
       }
     } else {
@@ -634,7 +649,7 @@ bool AppController::handleControlPacket(const InputPacket& packet) {
   }
 
   if (equalsIgnoreCase(packet.data, packet.length, "getname:WHO_ARE_YOU")) {
-    Serial.println("IAM:WALL_E_TFT");
+    serialPrintln("IAM:WALL_E_TFT");
     return true;
   }
   return false;
@@ -676,13 +691,26 @@ void AppController::controlTaskEntry(void* parameter) {
 void AppController::runControlTask() {
   for (;;) {
     bool handledPacket = false;
+    char networkResponse[512] = {0};
+    while (networkConfig_.pollSerialResponse(networkResponse,
+                                             sizeof(networkResponse))) {
+      serialPrintln(networkResponse);
+      handledPacket = true;
+    }
     for (uint8_t packetCount = 0; packetCount < 8; ++packetCount) {
       InputPacket packet;
       if (!input_.poll(packet)) {
         break;
       }
       handledPacket = true;
-      if (!handleControlPacket(packet)) {
+      bool applyAccepted = false;
+      if (networkConfig_.handleSerialCommand(packet.data, packet.length,
+                                             networkResponse,
+                                             sizeof(networkResponse),
+                                             applyAccepted)) {
+        serialPrintln(networkResponse);
+        if (applyAccepted) networkConfig_.acknowledgeApplyOutput();
+      } else if (!handleControlPacket(packet)) {
         enqueueUiPacket(packet);
       }
     }

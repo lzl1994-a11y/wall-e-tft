@@ -1,6 +1,7 @@
 #include "adapters/network/WifiImageStreamClient.h"
 
 #include <esp_heap_caps.h>
+#include <stdio.h>
 #include <string.h>
 
 namespace WallE {
@@ -8,7 +9,6 @@ namespace WallE {
 namespace {
 constexpr uint8_t kProtocolMagic[] = {'W', 'T', 'F', 'T'};
 constexpr uint8_t kProtocolVersion = 1;
-constexpr uint8_t kNetworkPayloadVersion = 1;
 constexpr TickType_t kFrameEventQueueWait = pdMS_TO_TICKS(20);
 constexpr TickType_t kFrameSlotWait = pdMS_TO_TICKS(250);
 constexpr uint32_t kNetworkTrialDelayMs = 500;
@@ -26,16 +26,99 @@ enum class ConfigValidationDetail : uint8_t {
   NoWifi = 8,
 };
 
-bool validWireText(const uint8_t* data, size_t length, bool required) {
-  if (data == nullptr || (required && length == 0)) {
-    return false;
+struct SerialResult { uint32_t sequence; uint8_t result; uint8_t detail; };
+
+bool reached(uint32_t now, uint32_t target) {
+  return static_cast<int32_t>(now - target) >= 0;
+}
+
+bool asciiEqualsIgnoreCase(const uint8_t* value, size_t length,
+                           const char* expected) {
+  size_t index = 0;
+  for (; index < length && expected[index] != '\0'; ++index) {
+    char actual = static_cast<char>(value[index]);
+    char wanted = expected[index];
+    if (actual >= 'A' && actual <= 'Z') actual = actual - 'A' + 'a';
+    if (wanted >= 'A' && wanted <= 'Z') wanted = wanted - 'A' + 'a';
+    if (actual != wanted) return false;
   }
+  return index == length && expected[index] == '\0';
+}
+
+bool parseU32(const uint8_t* value, size_t length, uint32_t& result) {
+  if (length == 0) return false;
+  uint32_t parsed = 0;
   for (size_t index = 0; index < length; ++index) {
-    if (data[index] < 0x20 || data[index] == 0x7f) {
-      return false;
+    if (value[index] < '0' || value[index] > '9') return false;
+    const uint32_t digit = value[index] - '0';
+    if (parsed > (UINT32_MAX - digit) / 10) return false;
+    parsed = parsed * 10 + digit;
+  }
+  result = parsed;
+  return true;
+}
+
+bool parsePort(const uint8_t* value, size_t length, uint16_t& result) {
+  uint32_t parsed = 0;
+  if (!parseU32(value, length, parsed) || parsed == 0 || parsed > UINT16_MAX) return false;
+  result = static_cast<uint16_t>(parsed);
+  return true;
+}
+
+int base64Value(uint8_t value) {
+  if (value >= 'A' && value <= 'Z') return value - 'A';
+  if (value >= 'a' && value <= 'z') return value - 'a' + 26;
+  if (value >= '0' && value <= '9') return value - '0' + 52;
+  if (value == '-') return 62;
+  if (value == '_') return 63;
+  return -1;
+}
+
+bool decodeBase64Url(const uint8_t* source, size_t sourceLength, char* destination,
+                     size_t capacity, size_t& written) {
+  written = 0;
+  if (sourceLength % 4 == 1 || destination == nullptr || capacity == 0) return false;
+  uint32_t accumulator = 0;
+  uint8_t bits = 0;
+  for (size_t index = 0; index < sourceLength; ++index) {
+    const int value = base64Value(source[index]);
+    if (value < 0) return false;
+    accumulator = (accumulator << 6) | static_cast<uint32_t>(value);
+    bits += 6;
+    while (bits >= 8) {
+      bits -= 8;
+      if (written + 1 >= capacity) return false;
+      const uint8_t decoded = static_cast<uint8_t>((accumulator >> bits) & 0xFF);
+      // NETCFG v1 carries UTF-8 text and forbids every control character.
+      // Reject NUL here as well, otherwise later C-string validation would
+      // silently ignore bytes after an embedded terminator.
+      if (decoded < 0x20 || decoded == 0x7F) return false;
+      destination[written++] = static_cast<char>(decoded);
     }
   }
+  if (bits > 0 && (accumulator & ((1U << bits) - 1U)) != 0) return false;
+  destination[written] = '\0';
   return true;
+}
+
+size_t encodeBase64Url(const char* source, char* destination, size_t capacity) {
+  static constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const size_t length = strnlen(source == nullptr ? "" : source, 65);
+  size_t output = 0;
+  for (size_t index = 0; index < length; index += 3) {
+    const size_t remaining = min(static_cast<size_t>(3), length - index);
+    const uint32_t group = (static_cast<uint32_t>(static_cast<uint8_t>(source[index])) << 16) |
+      (remaining > 1 ? static_cast<uint32_t>(static_cast<uint8_t>(source[index + 1])) << 8 : 0) |
+      (remaining > 2 ? static_cast<uint8_t>(source[index + 2]) : 0);
+    const size_t count = remaining + 1;
+    if (output + count >= capacity) return 0;
+    destination[output++] = kAlphabet[(group >> 18) & 0x3F];
+    destination[output++] = kAlphabet[(group >> 12) & 0x3F];
+    if (remaining > 1) destination[output++] = kAlphabet[(group >> 6) & 0x3F];
+    if (remaining > 2) destination[output++] = kAlphabet[group & 0x3F];
+  }
+  destination[output] = '\0';
+  return output;
 }
 }  // namespace
 
@@ -46,17 +129,25 @@ bool WifiImageStreamClient::begin() {
   if (taskHandle_ != nullptr) {
     return true;
   }
-  if (!networkConfigStore_.load(config_.defaultNetworkConfig)) {
+  const NetworkConfigStore::LoadResult load =
+      networkConfigStore_.load(config_.defaultNetworkConfig);
+  if (load == NetworkConfigStore::LoadResult::Error) {
     return false;
   }
   activeNetworkConfig_ = networkConfigStore_.active();
-  if (!hasConfiguredNetwork() || config_.maxJpegBytes == 0 || !psramFound()) {
+  activeFromNvs_ = networkConfigStore_.activeFromNvs();
+  if (config_.maxJpegBytes == 0 || !psramFound()) {
     return false;
   }
 
   eventQueue_ = xQueueCreate(config_.eventQueueDepth,
                              sizeof(ImageStreamEvent));
-  if (eventQueue_ == nullptr) {
+  serialResponseQueue_ = xQueueCreate(4, sizeof(SerialResult));
+  if (eventQueue_ == nullptr || serialResponseQueue_ == nullptr) {
+    if (eventQueue_ != nullptr) vQueueDelete(eventQueue_);
+    eventQueue_ = nullptr;
+    if (serialResponseQueue_ != nullptr) vQueueDelete(serialResponseQueue_);
+    serialResponseQueue_ = nullptr;
     return false;
   }
 
@@ -70,6 +161,8 @@ bool WifiImageStreamClient::begin() {
       }
       vQueueDelete(eventQueue_);
       eventQueue_ = nullptr;
+      vQueueDelete(serialResponseQueue_);
+      serialResponseQueue_ = nullptr;
       return false;
     }
   }
@@ -79,15 +172,7 @@ bool WifiImageStreamClient::begin() {
   // We deliberately own reconnects so failed credentials rotate instead of
   // repeatedly retrying only the last access point.
   WiFi.setAutoReconnect(false);
-  if (!startNextWifiConnection()) {
-    vQueueDelete(eventQueue_);
-    eventQueue_ = nullptr;
-    for (FrameSlot& slot : frameSlots_) {
-      heap_caps_free(slot.data);
-      slot.data = nullptr;
-    }
-    return false;
-  }
+  if (hasConfiguredNetwork()) startNextWifiConnection();
 
   const BaseType_t created = xTaskCreatePinnedToCore(
       taskEntry, "walle_image_net", config_.taskStackBytes, this,
@@ -100,6 +185,8 @@ bool WifiImageStreamClient::begin() {
     }
     vQueueDelete(eventQueue_);
     eventQueue_ = nullptr;
+    vQueueDelete(serialResponseQueue_);
+    serialResponseQueue_ = nullptr;
     return false;
   }
   return true;
@@ -170,14 +257,17 @@ void WifiImageStreamClient::run() {
 
 void WifiImageStreamClient::serviceWifi() {
   const uint32_t now = millis();
-  serviceTrial(now);
+  // A trial start/failure disconnects the current Wi-Fi/TCP path. Do not use
+  // a stale WL_CONNECTED state again in the same service iteration.
+  if (serviceTrial(now)) return;
   if (WiFi.status() != WL_CONNECTED) {
     if (client_.connected() || connected_) {
       client_.stop();
       resetParser();
       updateConnected(false);
     }
-    if (now - lastWifiAttemptMs_ >= config_.wifiReconnectMs) {
+    if (hasConfiguredNetwork() &&
+        now - lastWifiAttemptMs_ >= config_.wifiReconnectMs) {
       startNextWifiConnection();
     }
     return;
@@ -185,14 +275,22 @@ void WifiImageStreamClient::serviceWifi() {
   serviceTcp();
 }
 
-void WifiImageStreamClient::serviceTrial(uint32_t now) {
-  if (trialPending_ && !trialInProgress_ &&
-      static_cast<int32_t>(now - trialStartAtMs_) >= 0) {
+bool WifiImageStreamClient::serviceTrial(uint32_t now) {
+  bool start = false;
+  bool expired = false;
+  portENTER_CRITICAL(&networkConfigMux_);
+  start = trialPending_ && !trialInProgress_ && reached(now, trialStartAtMs_);
+  expired = trialInProgress_ && reached(now, trialDeadlineMs_);
+  portEXIT_CRITICAL(&networkConfigMux_);
+  if (start) {
     startTrial();
+    return true;
   }
-  if (trialInProgress_ && static_cast<int32_t>(now - trialDeadlineMs_) >= 0) {
+  if (expired) {
     finishTrialFailure();
+    return true;
   }
+  return false;
 }
 
 bool WifiImageStreamClient::hasConfiguredNetwork() const {
@@ -200,7 +298,7 @@ bool WifiImageStreamClient::hasConfiguredNetwork() const {
 }
 
 bool WifiImageStreamClient::startNextWifiConnection() {
-  const NetworkConfigData& networkConfig = workingNetworkConfig();
+  const NetworkConfigData networkConfig = workingNetworkConfig();
   if (!networkConfig.valid()) {
     return false;
   }
@@ -214,7 +312,9 @@ bool WifiImageStreamClient::startNextWifiConnection() {
     }
 
     nextWifiNetworkIndex_ = (index + 1) % NetworkConfigData::kWifiCount;
+    portENTER_CRITICAL(&networkConfigMux_);
     selectedWifiNetworkIndex_ = static_cast<uint8_t>(index);
+    portEXIT_CRITICAL(&networkConfigMux_);
     lastWifiAttemptMs_ = millis();
     WiFi.disconnect(false, false);
     WiFi.begin(network.ssid, network.password);
@@ -235,14 +335,13 @@ void WifiImageStreamClient::serviceTcp() {
       return;
     }
     lastTcpAttemptMs_ = now;
-    const NetworkConfigData& networkConfig = workingNetworkConfig();
+    const NetworkConfigData networkConfig = workingNetworkConfig();
     if (!client_.connect(networkConfig.host, networkConfig.port, 500)) {
       client_.stop();
       return;
     }
     client_.setNoDelay(true);
     resetParser();
-    updateConnected(true);
     const uint8_t* id = reinterpret_cast<const uint8_t*>(config_.deviceId);
     const size_t idLength = config_.deviceId == nullptr
                                 ? 0
@@ -252,18 +351,13 @@ void WifiImageStreamClient::serviceTcp() {
       updateConnected(false);
       return;
     }
-    if (trialInProgress_) {
+    updateConnected(true);
+    bool trial = false;
+    portENTER_CRITICAL(&networkConfigMux_);
+    trial = trialInProgress_;
+    portEXIT_CRITICAL(&networkConfigMux_);
+    if (trial) {
       finishTrialSuccess();
-    } else if (pendingTrialResult_) {
-      if (sendConfigResult(trialSequence_, MessageType::NetworkConfigApply,
-                           pendingTrialResultCode_)) {
-        pendingTrialResult_ = false;
-      } else {
-        client_.stop();
-        resetParser();
-        updateConnected(false);
-        return;
-      }
     }
     lastPingMs_ = now;
   }
@@ -341,7 +435,7 @@ void WifiImageStreamClient::processSocketBytes() {
 
 bool WifiImageStreamClient::startMessage() {
   if (memcmp(header_, kProtocolMagic, sizeof(kProtocolMagic)) != 0 ||
-      header_[4] != kProtocolVersion) {
+       header_[4] != kProtocolVersion || readU16(header_ + 6) != 0) {
     return false;
   }
 
@@ -353,31 +447,24 @@ bool WifiImageStreamClient::startMessage() {
   discardPayload_ = false;
 
   switch (currentType_) {
-    case MessageType::Hello:
     case MessageType::Ping:
     case MessageType::Pong:
-    case MessageType::StreamStart:
     case MessageType::StreamEnd:
-    case MessageType::NetworkConfigSet:
-    case MessageType::NetworkConfigApply:
-    case MessageType::NetworkConfigQuery:
-      if (currentPayloadLength_ > sizeof(controlPayload_)) {
-        discardPayload_ = true;
-      }
-      break;
+      return currentPayloadLength_ == 0;
+    case MessageType::StreamStart:
+      // !IIHH: duration, hold, target FPS and reserved (which must be zero).
+      return currentPayloadLength_ == 12;
     case MessageType::JpegFrame:
-      if (currentPayloadLength_ == 0 ||
+      if (currentPayloadLength_ < 4 ||
           currentPayloadLength_ > config_.maxJpegBytes) {
-        discardPayload_ = true;
-        ImageStreamEvent error;
-        error.type = ImageStreamEventType::ProtocolError;
-        error.sequence = currentSequence_;
-        queueEvent(error);
-      } else {
-        writingSlot_ = acquireFrameSlot();
-        discardPayload_ = writingSlot_ < 0;
+        return false;
       }
+      writingSlot_ = acquireFrameSlot();
+      discardPayload_ = writingSlot_ < 0;
       break;
+    case MessageType::Hello:
+      // HELLO is sent by the ESP32 when it connects; it is not a server command.
+      return false;
     default:
       return false;
   }
@@ -387,14 +474,20 @@ bool WifiImageStreamClient::startMessage() {
 void WifiImageStreamClient::finishMessage() {
   switch (currentType_) {
     case MessageType::StreamStart: {
+      if (readU16(controlPayload_ + 10) != 0) {
+        ImageStreamEvent error;
+        error.type = ImageStreamEventType::ProtocolError;
+        error.sequence = currentSequence_;
+        queueEvent(error);
+        client_.stop();
+        break;
+      }
       ImageStreamEvent event;
       event.type = ImageStreamEventType::StreamStarted;
       event.sequence = currentSequence_;
-      if (!discardPayload_ && currentPayloadLength_ >= 10) {
-        event.streamDurationMs = readU32(controlPayload_);
-        event.holdDurationMs = readU32(controlPayload_ + 4);
-        event.targetFps = readU16(controlPayload_ + 8);
-      }
+      event.streamDurationMs = readU32(controlPayload_);
+      event.holdDurationMs = readU32(controlPayload_ + 4);
+      event.targetFps = readU16(controlPayload_ + 8);
       queueEvent(event);
       break;
     }
@@ -440,243 +533,80 @@ void WifiImageStreamClient::finishMessage() {
       queueEvent(event, kFrameEventQueueWait);
       break;
     }
-    case MessageType::NetworkConfigSet: {
-      NetworkConfigData parsed;
-      uint8_t detail = static_cast<uint8_t>(ConfigValidationDetail::None);
-      if (trialInProgress_ || trialPending_) {
-        sendConfigResult(currentSequence_, MessageType::NetworkConfigSet,
-                         ConfigResult::ValidationError,
-                         static_cast<uint8_t>(ConfigValidationDetail::Length));
-      } else if (discardPayload_ ||
-          !parseNetworkConfigSet(parsed, detail)) {
-        sendConfigResult(currentSequence_, MessageType::NetworkConfigSet,
-                         ConfigResult::ValidationError, detail);
-      } else {
-        candidateNetworkConfig_ = parsed;
-        candidatePresent_ = true;
-        sendConfigResult(currentSequence_, MessageType::NetworkConfigSet,
-                         ConfigResult::Staged);
-      }
-      break;
-    }
-    case MessageType::NetworkConfigApply:
-      if (discardPayload_ || currentPayloadLength_ != 1 ||
-          controlPayload_[0] != kNetworkPayloadVersion) {
-        sendConfigResult(currentSequence_, MessageType::NetworkConfigApply,
-                         ConfigResult::ValidationError,
-                         static_cast<uint8_t>(ConfigValidationDetail::Version));
-      } else if (!candidatePresent_ || !candidateNetworkConfig_.valid()) {
-        sendConfigResult(currentSequence_, MessageType::NetworkConfigApply,
-                         ConfigResult::NoCandidate);
-      } else if (trialInProgress_ || trialPending_) {
-        sendConfigResult(currentSequence_, MessageType::NetworkConfigApply,
-                         ConfigResult::ValidationError,
-                         static_cast<uint8_t>(ConfigValidationDetail::Length));
-      } else {
-        // ACK is fully sent while the old connection is still alive. The task
-        // starts the disruptive Wi-Fi/TCP trial only after the 500 ms grace.
-        if (sendConfigResult(currentSequence_, MessageType::NetworkConfigApply,
-                             ConfigResult::ApplyAccepted)) {
-          trialSequence_ = currentSequence_;
-          trialStartAtMs_ = millis() + kNetworkTrialDelayMs;
-          trialPending_ = true;
-        }
-      }
-      break;
-    case MessageType::NetworkConfigQuery: {
-      if (discardPayload_ || currentPayloadLength_ != 1 ||
-          controlPayload_[0] != kNetworkPayloadVersion) {
-        sendConfigResult(currentSequence_, MessageType::NetworkConfigQuery,
-                         ConfigResult::ValidationError,
-                         static_cast<uint8_t>(ConfigValidationDetail::Version));
-        break;
-      }
-      uint8_t payload[kControlPayloadBytes] = {0};
-      const size_t length = writeNetworkStatus(payload, sizeof(payload));
-      if (length > 0) {
-        sendMessage(MessageType::NetworkConfigStatus, currentSequence_, payload,
-                    length);
-      }
-      break;
-    }
     case MessageType::Ping:
       sendMessage(MessageType::Pong, currentSequence_, nullptr, 0);
       break;
     case MessageType::Hello:
     case MessageType::Pong:
-    case MessageType::NetworkConfigResult:
-    case MessageType::NetworkConfigStatus:
       break;
   }
 }
 
-const NetworkConfigData& WifiImageStreamClient::workingNetworkConfig() const {
-  return trialInProgress_ ? candidateNetworkConfig_ : activeNetworkConfig_;
+NetworkConfigData WifiImageStreamClient::workingNetworkConfig() const {
+  portENTER_CRITICAL(&networkConfigMux_);
+  const NetworkConfigData result = trialInProgress_ ? candidateNetworkConfig_
+                                                     : activeNetworkConfig_;
+  portEXIT_CRITICAL(&networkConfigMux_);
+  return result;
 }
 
-bool WifiImageStreamClient::parseNetworkConfigSet(
-    NetworkConfigData& destination, uint8_t& validationDetail) const {
-  validationDetail = static_cast<uint8_t>(ConfigValidationDetail::None);
-  if (currentPayloadLength_ < 2 || controlPayload_[0] != kNetworkPayloadVersion) {
-    validationDetail = static_cast<uint8_t>(ConfigValidationDetail::Version);
-    return false;
-  }
-  if (controlPayload_[1] != NetworkConfigData::kWifiCount) {
-    validationDetail = static_cast<uint8_t>(ConfigValidationDetail::WifiCount);
-    return false;
-  }
-
-  NetworkConfigData parsed;
-  parsed.version = NetworkConfigData::kVersion;
-  size_t offset = 2;
-  for (size_t index = 0; index < NetworkConfigData::kWifiCount; ++index) {
-    if (offset >= currentPayloadLength_) {
-      validationDetail = static_cast<uint8_t>(ConfigValidationDetail::Length);
-      return false;
-    }
-    const size_t ssidLength = controlPayload_[offset++];
-    if (ssidLength > NetworkConfigData::kMaxSsidBytes ||
-        offset + ssidLength >= currentPayloadLength_ ||
-        !validWireText(controlPayload_ + offset, ssidLength, false)) {
-      validationDetail = static_cast<uint8_t>(ConfigValidationDetail::SsidLength);
-      return false;
-    }
-    memcpy(parsed.wifi[index].ssid, controlPayload_ + offset, ssidLength);
-    parsed.wifi[index].ssid[ssidLength] = '\0';
-    offset += ssidLength;
-
-    const size_t passwordLength = controlPayload_[offset++];
-    if (passwordLength > NetworkConfigData::kMaxPasswordBytes ||
-        offset + passwordLength > currentPayloadLength_ ||
-        !validWireText(controlPayload_ + offset, passwordLength, false)) {
-      validationDetail = static_cast<uint8_t>(ConfigValidationDetail::PasswordLength);
-      return false;
-    }
-    memcpy(parsed.wifi[index].password, controlPayload_ + offset,
-           passwordLength);
-    parsed.wifi[index].password[passwordLength] = '\0';
-    offset += passwordLength;
-  }
-  if (offset >= currentPayloadLength_) {
-    validationDetail = static_cast<uint8_t>(ConfigValidationDetail::Length);
-    return false;
-  }
-  const size_t hostLength = controlPayload_[offset++];
-  if (hostLength == 0 || hostLength > NetworkConfigData::kMaxHostBytes ||
-      offset + hostLength + 2 != currentPayloadLength_ ||
-      !validWireText(controlPayload_ + offset, hostLength, true)) {
-    validationDetail = static_cast<uint8_t>(ConfigValidationDetail::HostLength);
-    return false;
-  }
-  memcpy(parsed.host, controlPayload_ + offset, hostLength);
-  parsed.host[hostLength] = '\0';
-  offset += hostLength;
-  parsed.port = readU16(controlPayload_ + offset);
-  if (parsed.port == 0) {
-    validationDetail = static_cast<uint8_t>(ConfigValidationDetail::Port);
-    return false;
-  }
-  if (!parsed.valid()) {
-    validationDetail = static_cast<uint8_t>(ConfigValidationDetail::NoWifi);
-    return false;
-  }
-  destination = parsed;
-  return true;
-}
-
-size_t WifiImageStreamClient::writeNetworkStatus(uint8_t* destination,
-                                                  size_t capacity) const {
-  if (destination == nullptr || capacity < 6) {
-    return 0;
-  }
-  // Never serialize credentials here. Status intentionally exposes SSIDs only.
-  size_t offset = 0;
-  destination[offset++] = kNetworkPayloadVersion;
-  uint8_t flags = networkConfigStore_.activeFromNvs() ? 0x01 : 0x00;
-  if (candidatePresent_) {
-    flags |= 0x02;
-  }
-  if (trialInProgress_ || trialPending_) {
-    flags |= 0x04;
-  }
-  destination[offset++] = flags;
-  destination[offset++] = selectedWifiNetworkIndex_;
-  const NetworkConfigData& active = activeNetworkConfig_;
-  for (const NetworkConfigData::WifiCredential& network : active.wifi) {
-    const size_t length = strnlen(network.ssid, sizeof(network.ssid));
-    if (length > UINT8_MAX || offset + 1 + length > capacity) {
-      return 0;
-    }
-    destination[offset++] = static_cast<uint8_t>(length);
-    memcpy(destination + offset, network.ssid, length);
-    offset += length;
-  }
-  const size_t hostLength = strnlen(active.host, sizeof(active.host));
-  if (hostLength == 0 || hostLength > UINT8_MAX ||
-      offset + 1 + hostLength + 2 > capacity) {
-    return 0;
-  }
-  destination[offset++] = static_cast<uint8_t>(hostLength);
-  memcpy(destination + offset, active.host, hostLength);
-  offset += hostLength;
-  writeU16(destination + offset, active.port);
-  return offset + 2;
-}
-
-bool WifiImageStreamClient::sendConfigResult(uint32_t sequence,
-                                             MessageType operation,
-                                             ConfigResult result,
-                                             uint8_t detail) {
-  const uint8_t payload[] = {kNetworkPayloadVersion,
-                             static_cast<uint8_t>(operation),
-                             static_cast<uint8_t>(result), detail};
-  return sendMessage(MessageType::NetworkConfigResult, sequence, payload,
-                     sizeof(payload));
+void WifiImageStreamClient::queueSerialResult(uint32_t sequence,
+                                              ConfigResult result,
+                                              uint8_t detail) {
+  if (serialResponseQueue_ == nullptr) return;
+  const SerialResult item = {sequence, static_cast<uint8_t>(result), detail};
+  xQueueSend(serialResponseQueue_, &item, 0);
 }
 
 void WifiImageStreamClient::startTrial() {
+  portENTER_CRITICAL(&networkConfigMux_);
   trialPending_ = false;
   trialStartAtMs_ = 0;
   if (!candidatePresent_ || !candidateNetworkConfig_.valid()) {
-    if (!sendConfigResult(trialSequence_, MessageType::NetworkConfigApply,
-                          ConfigResult::NoCandidate)) {
-      pendingTrialResult_ = true;
-      pendingTrialResultCode_ = ConfigResult::NoCandidate;
-    }
+    portEXIT_CRITICAL(&networkConfigMux_);
+    queueSerialResult(trialSequence_, ConfigResult::NoCandidate);
     return;
   }
   trialInProgress_ = true;
   trialDeadlineMs_ = millis() + kNetworkTrialTimeoutMs;
   nextWifiNetworkIndex_ = 0;
   selectedWifiNetworkIndex_ = 0xFF;
+  portEXIT_CRITICAL(&networkConfigMux_);
   client_.stop();
   resetParser();
   updateConnected(false);
   WiFi.disconnect(false, false);
-  lastWifiAttemptMs_ = 0;
+  lastWifiAttemptMs_ = millis() - config_.wifiReconnectMs;
+  // Start the first candidate immediately. Besides reducing provisioning
+  // latency, issuing WiFi.begin() here prevents a transient old
+  // WL_CONNECTED status from validating the candidate TCP endpoint.
+  startNextWifiConnection();
 }
 
 void WifiImageStreamClient::finishTrialSuccess() {
-  if (!networkConfigStore_.saveActive(candidateNetworkConfig_)) {
+  NetworkConfigData candidate;
+  portENTER_CRITICAL(&networkConfigMux_);
+  candidate = candidateNetworkConfig_;
+  portEXIT_CRITICAL(&networkConfigMux_);
+  if (!networkConfigStore_.saveActive(candidate)) {
     finishTrialFailure(ConfigResult::StoreError);
     return;
   }
+  portENTER_CRITICAL(&networkConfigMux_);
   activeNetworkConfig_ = networkConfigStore_.active();
+  activeFromNvs_ = true;
   trialInProgress_ = false;
   trialDeadlineMs_ = 0;
   candidatePresent_ = false;
-  if (!sendConfigResult(trialSequence_, MessageType::NetworkConfigApply,
-                        ConfigResult::TrialConnectedSaved)) {
-    pendingTrialResult_ = true;
-    pendingTrialResultCode_ = ConfigResult::TrialConnectedSaved;
-    client_.stop();
-    resetParser();
-    updateConnected(false);
-  }
+  const uint32_t sequence = trialSequence_;
+  portEXIT_CRITICAL(&networkConfigMux_);
+  queueSerialResult(sequence, ConfigResult::TrialConnectedSaved);
 }
 
 void WifiImageStreamClient::finishTrialFailure(ConfigResult result) {
+  portENTER_CRITICAL(&networkConfigMux_);
   if (!trialInProgress_ && !trialPending_) {
+    portEXIT_CRITICAL(&networkConfigMux_);
     return;
   }
   trialPending_ = false;
@@ -685,13 +615,158 @@ void WifiImageStreamClient::finishTrialFailure(ConfigResult result) {
   trialDeadlineMs_ = 0;
   nextWifiNetworkIndex_ = 0;
   selectedWifiNetworkIndex_ = 0xFF;
+  const uint32_t sequence = trialSequence_;
+  portEXIT_CRITICAL(&networkConfigMux_);
   client_.stop();
   resetParser();
   updateConnected(false);
   WiFi.disconnect(false, false);
-  lastWifiAttemptMs_ = 0;
-  pendingTrialResult_ = true;
-  pendingTrialResultCode_ = result;
+  lastWifiAttemptMs_ = millis() - config_.wifiReconnectMs;
+  queueSerialResult(sequence, result);
+}
+
+bool WifiImageStreamClient::handleSerialCommand(const uint8_t* data,
+                                                size_t length,
+                                                char* response,
+                                                size_t capacity,
+                                                bool& applyAccepted) {
+  applyAccepted = false;
+  if (data == nullptr || response == nullptr || capacity == 0) return false;
+  const char* operations[] = {"SET", "APPLY", "QUERY"};
+  const char* prefixes[] = {"netcfg:set:", "netcfg:apply:", "netcfg:query:"};
+  size_t operation = 3;
+  for (size_t index = 0; index < 3; ++index) {
+    const size_t prefixLength = strlen(prefixes[index]);
+    if (length >= prefixLength && asciiEqualsIgnoreCase(data, prefixLength, prefixes[index])) {
+      operation = index;
+      data += prefixLength;
+      length -= prefixLength;
+      break;
+    }
+  }
+  if (operation == 3) return false;
+
+  const uint8_t* fields[10] = {0};
+  size_t fieldLengths[10] = {0};
+  size_t count = 0;
+  size_t start = 0;
+  for (size_t index = 0; index <= length; ++index) {
+    if (index != length && data[index] != '|') continue;
+    if (count >= 10) break;
+    fields[count] = data + start;
+    fieldLengths[count++] = index - start;
+    start = index + 1;
+  }
+  uint32_t sequence = 0;
+  const bool sequenceOk = count > 0 && parseU32(fields[0], fieldLengths[0], sequence);
+  auto resultLine = [&](ConfigResult result, uint8_t detail) {
+    snprintf(response, capacity, "NETCFG:RESULT:%lu|%s|%u|%u",
+             static_cast<unsigned long>(sequence), operations[operation],
+             static_cast<unsigned>(result), static_cast<unsigned>(detail));
+  };
+  if (!sequenceOk || (operation == 0 && count != 10) ||
+      ((operation == 1 || operation == 2) && count != 2) ||
+      (count > 0 && start <= length)) {
+    resultLine(ConfigResult::ValidationError,
+               static_cast<uint8_t>(ConfigValidationDetail::WifiCount));
+    return true;
+  }
+  if (fieldLengths[1] != 1 || fields[1][0] != '1') {
+    resultLine(ConfigResult::ValidationError,
+               static_cast<uint8_t>(ConfigValidationDetail::Version));
+    return true;
+  }
+
+  if (operation == 2) {
+    NetworkConfigData active;
+    bool activeFromNvs = false, candidate = false, busy = false;
+    uint8_t selected = 0xFF;
+    portENTER_CRITICAL(&networkConfigMux_);
+    active = activeNetworkConfig_;
+    activeFromNvs = activeFromNvs_;
+    candidate = candidatePresent_;
+    busy = trialPending_ || trialInProgress_;
+    selected = selectedWifiNetworkIndex_;
+    portEXIT_CRITICAL(&networkConfigMux_);
+    char encoded[3][48] = {{0}}, host[88] = {0};
+    for (size_t index = 0; index < 3; ++index)
+      if (encodeBase64Url(active.wifi[index].ssid, encoded[index], sizeof(encoded[index])) == 0 && active.wifi[index].ssid[0] != '\0') {
+        resultLine(ConfigResult::StoreError, static_cast<uint8_t>(ConfigValidationDetail::Length)); return true;
+      }
+    if (encodeBase64Url(active.host, host, sizeof(host)) == 0 && active.host[0] != '\0') {
+      resultLine(ConfigResult::StoreError, static_cast<uint8_t>(ConfigValidationDetail::Length)); return true;
+    }
+    const uint8_t flags = (activeFromNvs ? 1 : 0) | (candidate ? 2 : 0) | (busy ? 4 : 0);
+    snprintf(response, capacity, "NETCFG:STATUS:%lu|1|%u|%u|%s|%s|%s|%s|%u",
+             static_cast<unsigned long>(sequence), static_cast<unsigned>(flags),
+             static_cast<unsigned>(selected), encoded[0], encoded[1], encoded[2], host,
+             static_cast<unsigned>(active.port));
+    return true;
+  }
+
+  if (operation == 1) {
+    portENTER_CRITICAL(&networkConfigMux_);
+    const bool busy = trialPending_ || trialInProgress_;
+    const bool available = candidatePresent_ && candidateNetworkConfig_.valid();
+    if (!busy && available) trialSequence_ = sequence;
+    portEXIT_CRITICAL(&networkConfigMux_);
+    if (busy) resultLine(ConfigResult::ValidationError, static_cast<uint8_t>(ConfigValidationDetail::Length));
+    else if (!available) resultLine(ConfigResult::NoCandidate, 0);
+    else { resultLine(ConfigResult::ApplyAccepted, 0); applyAccepted = true; }
+    return true;
+  }
+
+  NetworkConfigData parsed;
+  parsed.version = NetworkConfigData::kVersion;
+  for (size_t index = 0; index < 3; ++index) {
+    size_t decoded = 0;
+    if (!decodeBase64Url(fields[2 + index * 2], fieldLengths[2 + index * 2],
+                         parsed.wifi[index].ssid, sizeof(parsed.wifi[index].ssid), decoded) ||
+        decoded > NetworkConfigData::kMaxSsidBytes) {
+      resultLine(ConfigResult::ValidationError, static_cast<uint8_t>(ConfigValidationDetail::SsidLength)); return true;
+    }
+    if (!decodeBase64Url(fields[3 + index * 2], fieldLengths[3 + index * 2],
+                         parsed.wifi[index].password, sizeof(parsed.wifi[index].password), decoded) ||
+        decoded > NetworkConfigData::kMaxPasswordBytes) {
+      resultLine(ConfigResult::ValidationError, static_cast<uint8_t>(ConfigValidationDetail::PasswordLength)); return true;
+    }
+  }
+  size_t decoded = 0;
+  if (!decodeBase64Url(fields[8], fieldLengths[8], parsed.host, sizeof(parsed.host), decoded) || decoded == 0 || decoded > NetworkConfigData::kMaxHostBytes) {
+    resultLine(ConfigResult::ValidationError, static_cast<uint8_t>(ConfigValidationDetail::HostLength)); return true;
+  }
+  if (!parsePort(fields[9], fieldLengths[9], parsed.port)) {
+    resultLine(ConfigResult::ValidationError, static_cast<uint8_t>(ConfigValidationDetail::Port)); return true;
+  }
+  if (!parsed.valid()) {
+    resultLine(ConfigResult::ValidationError, static_cast<uint8_t>(ConfigValidationDetail::NoWifi)); return true;
+  }
+  portENTER_CRITICAL(&networkConfigMux_);
+  const bool busy = trialPending_ || trialInProgress_;
+  if (!busy) { candidateNetworkConfig_ = parsed; candidatePresent_ = true; }
+  portEXIT_CRITICAL(&networkConfigMux_);
+  if (busy) resultLine(ConfigResult::ValidationError, static_cast<uint8_t>(ConfigValidationDetail::Length));
+  else resultLine(ConfigResult::Staged, 0);
+  return true;
+}
+
+void WifiImageStreamClient::acknowledgeApplyOutput() {
+  portENTER_CRITICAL(&networkConfigMux_);
+  if (!trialPending_ && !trialInProgress_ && candidatePresent_ && candidateNetworkConfig_.valid()) {
+    trialStartAtMs_ = millis() + kNetworkTrialDelayMs;
+    trialPending_ = true;
+  }
+  portEXIT_CRITICAL(&networkConfigMux_);
+}
+
+bool WifiImageStreamClient::pollSerialResponse(char* response, size_t capacity) {
+  SerialResult result;
+  if (response == nullptr || capacity == 0 || serialResponseQueue_ == nullptr ||
+      xQueueReceive(serialResponseQueue_, &result, 0) != pdTRUE) return false;
+  snprintf(response, capacity, "NETCFG:RESULT:%lu|APPLY|%u|%u",
+           static_cast<unsigned long>(result.sequence), static_cast<unsigned>(result.result),
+           static_cast<unsigned>(result.detail));
+  return true;
 }
 
 void WifiImageStreamClient::resetParser() {

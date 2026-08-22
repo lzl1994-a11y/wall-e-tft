@@ -1,6 +1,7 @@
 #pragma once
 
-// Copy this file to Secrets.h and fill in the values for the robot network.
+// Optional bootstrap defaults only. USB serial NETCFG is the sole runtime
+// configuration/recovery channel and can replace these values without reboot.
 // Secrets.h is ignored by Git.
 // Up to three networks are tried in this order. Leave an SSID empty to skip it.
 #define WALLE_WIFI_1_SSID "RDK_X3_HOTSPOT"
