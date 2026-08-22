@@ -17,7 +17,6 @@ inline const SpiBusCoordinator& sharedSpiBus() {
   static const SpiBusCoordinator::Device devices[] = {
       {WallEConfig::kTftCs, true},
       {WallEConfig::kScreenFontCs, WallEConfig::kUseScreenFontFlash},
-      {WallEConfig::eysTftCs, WallEConfig::kEnableEyeDisplay},
   };
   static const SpiBusCoordinator bus(devices, sizeof(devices) / sizeof(devices[0]));
   return bus;

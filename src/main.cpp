@@ -2,6 +2,7 @@
 #include "adapters/display/St7789DisplayPort.h"
 #include "adapters/input/SerialInputPort.h"
 #include "adapters/log/SerialLogger.h"
+#include "adapters/network/WifiImageStreamClient.h"
 #include "adapters/pca9685/Pca9685Driver.h"
 #include "app/AppController.h"
 #include "config/Config.h"
@@ -28,9 +29,30 @@ Gc9a01EyeDisplay eyeDisplay;
 /// English: PCA9685 driver implementation for I2C communication.
 Pca9685Driver pca9685(WallEConfig::kPca9685Sda, WallEConfig::kPca9685Scl);
 
+WifiImageStreamClient::Config makeImageStreamConfig() {
+  WifiImageStreamClient::Config config;
+  config.defaultNetworkConfig.setDefaults(
+      WallEConfig::kWifi1Ssid, WallEConfig::kWifi1Password,
+      WallEConfig::kWifi2Ssid, WallEConfig::kWifi2Password,
+      WallEConfig::kWifi3Ssid, WallEConfig::kWifi3Password,
+      WallEConfig::kImageServerHost, WallEConfig::kImageServerPort);
+  config.maxJpegBytes = WallEConfig::kCameraMaxJpegBytes;
+  config.wifiReconnectMs = WallEConfig::kWifiReconnectMs;
+  config.tcpReconnectMs = WallEConfig::kTcpReconnectMs;
+  config.pingMs = WallEConfig::kTcpPingMs;
+  config.eventQueueDepth = WallEConfig::kImageEventQueueDepth;
+  config.taskStackBytes = WallEConfig::kImageNetworkTaskStackBytes;
+  config.taskPriority = WallEConfig::kImageNetworkTaskPriority;
+  config.taskCore = WallEConfig::kImageNetworkTaskCore;
+  return config;
+}
+
+WifiImageStreamClient imageStream(makeImageStreamConfig());
+
 /// 中文：应用总控制器，连接输入、日志、主屏、眼睛屏和PCA9685。
 /// English: Main application controller that wires input, logger, main display, eye display, and pca9685.
-AppController controller(logger, input, display, eyeDisplay, pca9685);
+AppController controller(logger, input, display, eyeDisplay, pca9685,
+                         imageStream);
 
 /**
  * 中文：Arduino 启动入口，初始化可选眼睛屏和应用控制器。

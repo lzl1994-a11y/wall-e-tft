@@ -2,9 +2,13 @@
 
 namespace WallE {
 
-St7789Panel::St7789Panel(const Config& config) : config_(config) {}
+St7789Panel::St7789Panel(const Config& config)
+    : config_(config),
+      asyncWriter_(config.dcPin, config.csPin, config.spiHost,
+                   config.spiHz) {}
 
 St7789Panel::~St7789Panel() {
+  asyncWriter_.end();
   delete gfx_;
   delete bus_;
 }
@@ -16,8 +20,9 @@ bool St7789Panel::begin() {
     return ready_;
   }
 
-  bus_ = new Arduino_HWSPI(config_.dcPin, config_.csPin, config_.sckPin, config_.mosiPin,
-                           config_.misoPin);
+  bus_ = new Arduino_ESP32SPIDMA(
+      config_.dcPin, config_.csPin, config_.sckPin, config_.mosiPin,
+      config_.misoPin, config_.spiHost, config_.sharedInterface);
   if (bus_ == nullptr) {
     return false;
   }
@@ -37,7 +42,9 @@ bool St7789Panel::begin() {
     delete bus_;
     gfx_ = nullptr;
     bus_ = nullptr;
+    return false;
   }
+  asyncWriter_.begin();
   return ready_;
 }
 

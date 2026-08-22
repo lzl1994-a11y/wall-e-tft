@@ -42,9 +42,9 @@ class Gc9a01Panel {
     /// English: TFT reset pin.
     int rstPin = GFX_NOT_DEFINED;
 
-    /// 中文：ESP32 SPI Host 编号，当前眼睛屏使用 HSPI/软件独立总线配置。
-    /// English: ESP32 SPI host number; the current eye display uses HSPI/independent software-style bus config.
-    int8_t spiHost = HSPI;
+    /// 中文：ESP-IDF SPI Host 编号；眼睛屏固定使用独立的 SPI3 Host。
+    /// English: ESP-IDF SPI host number; the eye display uses independent SPI3.
+    int8_t spiHost = SPI3_HOST;
 
     /// 中文：Arduino_GFX SPI 共享接口标志，保持与原眼睛屏初始化参数一致。
     /// English: Arduino_GFX SPI shared-interface flag, kept consistent with the previous eye display initialization.

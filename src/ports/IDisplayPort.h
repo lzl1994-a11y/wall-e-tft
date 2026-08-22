@@ -76,6 +76,15 @@ class IDisplayPort {
    * @return 无 / None.
    */
   virtual void render(const ChatSession& session) = 0;
+
+  /** Shows a transient camera connection/first-frame screen. */
+  virtual void showCameraWaiting() = 0;
+
+  /** Decodes one 240x240 baseline JPEG and pushes it through SPI DMA. */
+  virtual bool showJpegFrame(const uint8_t* data, size_t length) = 0;
+
+  /** Reports whether the main-display asynchronous DMA path is available. */
+  virtual bool imageDmaReady() const = 0;
 };
 
 }  // namespace WallE

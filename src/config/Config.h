@@ -2,6 +2,43 @@
 
 #include <Arduino.h>
 
+#if __has_include("config/Secrets.h")
+#include "config/Secrets.h"
+#endif
+
+#ifndef WALLE_WIFI_1_SSID
+#ifdef WALLE_WIFI_SSID
+#define WALLE_WIFI_1_SSID WALLE_WIFI_SSID
+#else
+#define WALLE_WIFI_1_SSID ""
+#endif
+#endif
+#ifndef WALLE_WIFI_1_PASSWORD
+#ifdef WALLE_WIFI_PASSWORD
+#define WALLE_WIFI_1_PASSWORD WALLE_WIFI_PASSWORD
+#else
+#define WALLE_WIFI_1_PASSWORD ""
+#endif
+#endif
+#ifndef WALLE_WIFI_2_SSID
+#define WALLE_WIFI_2_SSID ""
+#endif
+#ifndef WALLE_WIFI_2_PASSWORD
+#define WALLE_WIFI_2_PASSWORD ""
+#endif
+#ifndef WALLE_WIFI_3_SSID
+#define WALLE_WIFI_3_SSID ""
+#endif
+#ifndef WALLE_WIFI_3_PASSWORD
+#define WALLE_WIFI_3_PASSWORD ""
+#endif
+#ifndef WALLE_IMAGE_SERVER_HOST
+#define WALLE_IMAGE_SERVER_HOST "192.168.4.1"
+#endif
+#ifndef WALLE_IMAGE_SERVER_PORT
+#define WALLE_IMAGE_SERVER_PORT 9000
+#endif
+
 /**
  * 中文：项目硬件与运行参数配置命名空间。
  * English: Namespace for project hardware and runtime configuration values.
@@ -34,6 +71,34 @@ constexpr uint32_t kPca9685I2cHz = 400000;
 /// 中文：进入聊天界面后，长时间没有 you:/ai: 消息时自动返回电量界面的时间。
 /// English: Idle timeout for returning from chat screen to power screen.
 constexpr uint32_t kChatIdleReturnMs = 30000;
+
+/// Wi-Fi station and persistent image-server connection settings.
+/// Empty SSIDs are skipped; configured networks are tried in order.
+constexpr const char* kWifi1Ssid = WALLE_WIFI_1_SSID;
+constexpr const char* kWifi1Password = WALLE_WIFI_1_PASSWORD;
+constexpr const char* kWifi2Ssid = WALLE_WIFI_2_SSID;
+constexpr const char* kWifi2Password = WALLE_WIFI_2_PASSWORD;
+constexpr const char* kWifi3Ssid = WALLE_WIFI_3_SSID;
+constexpr const char* kWifi3Password = WALLE_WIFI_3_PASSWORD;
+constexpr const char* kImageServerHost = WALLE_IMAGE_SERVER_HOST;
+constexpr uint16_t kImageServerPort = WALLE_IMAGE_SERVER_PORT;
+constexpr uint32_t kWifiReconnectMs = 5000;
+constexpr uint32_t kTcpReconnectMs = 1000;
+constexpr uint32_t kTcpPingMs = 2000;
+
+/// Camera stream defaults: three seconds live followed by three seconds held.
+constexpr uint32_t kCameraStreamDurationMs = 3000;
+constexpr uint32_t kCameraHoldDurationMs = 3000;
+constexpr uint32_t kCameraFrameIdleTimeoutMs = 750;
+constexpr uint32_t kCameraStreamGraceMs = 1000;
+constexpr uint16_t kCameraTargetFps = 10;
+constexpr size_t kCameraMaxJpegBytes = 256 * 1024;
+
+/// Background network task configuration.
+constexpr BaseType_t kImageNetworkTaskPriority = 2;
+constexpr uint32_t kImageNetworkTaskStackBytes = 8192;
+constexpr BaseType_t kImageNetworkTaskCore = 0;
+constexpr UBaseType_t kImageEventQueueDepth = 8;
 
 /// 中文：单条串口输入最大字节数，超出部分会被丢弃。
 /// English: Maximum bytes per Serial input packet; bytes beyond this limit are dropped.

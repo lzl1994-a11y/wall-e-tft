@@ -1,5 +1,7 @@
 #pragma once
 
+#include "adapters/display/Esp32AsyncDmaWriter.h"
+
 #include <Arduino_GFX_Library.h>
 #include <stdint.h>
 
@@ -39,6 +41,14 @@ class St7789Panel {
     /// 中文：TFT 复位引脚。
     /// English: TFT reset pin.
     int rstPin = GFX_NOT_DEFINED;
+
+    /// 中文：ESP-IDF SPI Host；主屏与眼屏必须使用不同 Host。
+    /// English: ESP-IDF SPI host; the main and eye displays must use different hosts.
+    int8_t spiHost = SPI2_HOST;
+
+    /// 中文：允许字库 Flash 和异步 DMA Writer 共用这条 SPI 总线。
+    /// English: Allows the font flash and async DMA writer to share this SPI bus.
+    bool sharedInterface = true;
 
     /// 中文：屏幕逻辑宽度，单位像素。
     /// English: Logical panel width in pixels.
@@ -110,6 +120,11 @@ class St7789Panel {
    */
   Arduino_GFX* gfx() const { return gfx_; }
 
+  /** Returns the asynchronous DMA writer when initialization succeeded. */
+  IAsyncBitmapWriter* asyncWriter() {
+    return asyncWriter_.ready() ? &asyncWriter_ : nullptr;
+  }
+
   /**
    * 中文：返回面板是否已经成功初始化。
    * English: Returns whether the panel has been initialized successfully.
@@ -126,11 +141,15 @@ class St7789Panel {
 
   /// 中文：Arduino_GFX 硬件 SPI 数据总线对象，由本驱动创建和持有。
   /// English: Arduino_GFX hardware SPI data bus created and owned by this driver.
-  Arduino_HWSPI* bus_ = nullptr;
+  Arduino_ESP32SPIDMA* bus_ = nullptr;
 
   /// 中文：Arduino_GFX ST7789 控制器对象，由本驱动创建和持有。
   /// English: Arduino_GFX ST7789 controller object created and owned by this driver.
   Arduino_ST7789* gfx_ = nullptr;
+
+  /// 中文：与普通 Arduino_GFX 绘图共享 SPI2 Host 的异步 DMA 写入器。
+  /// English: Async DMA writer sharing SPI2 with regular Arduino_GFX drawing.
+  Esp32AsyncDmaWriter asyncWriter_;
 
   /// 中文：屏幕是否已成功启动。
   /// English: Whether the panel has started successfully.

@@ -2,7 +2,7 @@
 
 #include "ports/IBitmapFontProvider.h"
 #include <Arduino.h>
-#include <SPI.h>
+#include <driver/spi_master.h>
 
 namespace WallE {
 
@@ -37,6 +37,10 @@ class ScreenFontFlash : public IBitmapFontProvider {
     /// English: SPI frequency for the font flash, in Hz.
     uint32_t spiHz = 2000000;
 
+    /// 中文：字库所在的 ESP32 SPI Host，必须与主屏一致。
+    /// English: ESP32 SPI host used by the font flash; must match the main display.
+    int8_t spiHost = SPI2_HOST;
+
     /// 中文：8x16 单字节字模区起始地址。
     /// English: Start address of the 8x16 single-byte glyph region.
     uint32_t ascii8x16Base = 0x1D00;
@@ -62,6 +66,7 @@ class ScreenFontFlash : public IBitmapFontProvider {
    *               English: Hardware pin and glyph layout configuration.
    */
   explicit ScreenFontFlash(const Config& config);
+  ~ScreenFontFlash() override;
 
   /**
    * 中文：初始化字库 Flash 的 CS、SPI，并发送唤醒命令。
@@ -143,7 +148,7 @@ class ScreenFontFlash : public IBitmapFontProvider {
    * 中文：选中字库 Flash 并开始 SPI 事务。
    * English: Selects the font flash and begins an SPI transaction.
    */
-  void select();
+  bool select();
 
   /**
    * 中文：结束 SPI 事务并取消选中字库 Flash。
@@ -162,6 +167,10 @@ class ScreenFontFlash : public IBitmapFontProvider {
   /// 中文：签名校验后的可用状态。
   /// English: Availability after signature verification.
   bool available_ = false;
+
+  /// 中文：由 ESP-IDF SPI Master 驱动管理的字库设备句柄。
+  /// English: Font-device handle managed by the ESP-IDF SPI master driver.
+  spi_device_handle_t device_ = nullptr;
 };
 
 }  // namespace WallE

@@ -1,5 +1,6 @@
 #include "adapters/display/GifPlayer.h"
 #include <Arduino.h>
+#include <esp_heap_caps.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -38,8 +39,14 @@ void GifPlayer::begin() {
       config_.maxHeight > 0) {
     frameCanvasPixels_ =
         static_cast<size_t>(config_.maxWidth) * config_.maxHeight;
-    frameCanvas_ = static_cast<uint16_t*>(
-        malloc(frameCanvasPixels_ * sizeof(uint16_t)));
+    const size_t canvasBytes = frameCanvasPixels_ * sizeof(uint16_t);
+    if (psramFound()) {
+      frameCanvas_ = static_cast<uint16_t*>(heap_caps_malloc(
+          canvasBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    }
+    if (frameCanvas_ == nullptr) {
+      frameCanvas_ = static_cast<uint16_t*>(malloc(canvasBytes));
+    }
     if (frameCanvas_ == nullptr) {
       frameCanvasPixels_ = 0;
     } else {

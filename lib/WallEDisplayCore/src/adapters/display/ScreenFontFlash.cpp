@@ -28,6 +28,13 @@ const uint8_t kSignature[] = {'J', 'Y', 'C', '-', '4', 'M', 'b', 'B', 'y', 't', 
 
 ScreenFontFlash::ScreenFontFlash(const Config& config) : config_(config) {}
 
+ScreenFontFlash::~ScreenFontFlash() {
+  if (device_ != nullptr) {
+    spi_bus_remove_device(device_);
+    device_ = nullptr;
+  }
+}
+
 bool ScreenFontFlash::begin() {
   initialized_ = false;
   available_ = false;
@@ -38,15 +45,31 @@ bool ScreenFontFlash::begin() {
 
   pinMode(config_.csPin, OUTPUT);
   digitalWrite(config_.csPin, HIGH);
-  SPI.begin(config_.sckPin, config_.misoPin, config_.mosiPin);
 
-  select();
-  SPI.transfer(kReleasePowerDown);
-  SPI.transfer(0x00);
-  SPI.transfer(0x00);
-  SPI.transfer(0x00);
-  SPI.transfer(0x00);
+  spi_device_interface_config_t deviceConfig = {};
+  deviceConfig.mode = 0;
+  deviceConfig.clock_speed_hz = static_cast<int>(config_.spiHz);
+  deviceConfig.spics_io_num = -1;
+  deviceConfig.queue_size = 1;
+  deviceConfig.flags = SPI_DEVICE_NO_DUMMY;
+  if (spi_bus_add_device(static_cast<spi_host_device_t>(config_.spiHost),
+                         &deviceConfig, &device_) != ESP_OK) {
+    device_ = nullptr;
+    return false;
+  }
+
+  if (!select()) {
+    return false;
+  }
+  uint8_t wakeBytes[] = {kReleasePowerDown, 0x00, 0x00, 0x00, 0x00};
+  spi_transaction_t wake = {};
+  wake.length = sizeof(wakeBytes) * 8;
+  wake.tx_buffer = wakeBytes;
+  const esp_err_t wakeResult = spi_device_polling_transmit(device_, &wake);
   deselect();
+  if (wakeResult != ESP_OK) {
+    return false;
+  }
   delay(2);
 
   initialized_ = true;
@@ -67,16 +90,28 @@ bool ScreenFontFlash::read(uint32_t address, uint8_t* buffer, size_t length) {
     return false;
   }
 
-  select();
-  SPI.transfer(kReadData);
-  SPI.transfer((address >> 16) & 0xFF);
-  SPI.transfer((address >> 8) & 0xFF);
-  SPI.transfer(address & 0xFF);
-  for (size_t i = 0; i < length; ++i) {
-    buffer[i] = SPI.transfer(0x00);
+  if (!select()) {
+    return false;
+  }
+
+  spi_transaction_t command = {};
+  command.flags = SPI_TRANS_USE_TXDATA;
+  command.length = 32;
+  command.tx_data[0] = kReadData;
+  command.tx_data[1] = static_cast<uint8_t>(address >> 16);
+  command.tx_data[2] = static_cast<uint8_t>(address >> 8);
+  command.tx_data[3] = static_cast<uint8_t>(address);
+  esp_err_t result = spi_device_polling_transmit(device_, &command);
+
+  if (result == ESP_OK) {
+    spi_transaction_t payload = {};
+    payload.length = length * 8;
+    payload.rxlength = length * 8;
+    payload.rx_buffer = buffer;
+    result = spi_device_polling_transmit(device_, &payload);
   }
   deselect();
-  return true;
+  return result == ESP_OK;
 }
 
 bool ScreenFontFlash::readAscii8x16(uint8_t code, uint8_t* buffer, size_t length) {
@@ -105,14 +140,20 @@ bool ScreenFontFlash::readDoubleByte16x16(uint8_t high, uint8_t low, uint8_t* bu
               kDoubleByte16x16Size);
 }
 
-void ScreenFontFlash::select() {
+bool ScreenFontFlash::select() {
+  if (device_ == nullptr ||
+      spi_device_acquire_bus(device_, portMAX_DELAY) != ESP_OK) {
+    return false;
+  }
   digitalWrite(config_.csPin, LOW);
-  SPI.beginTransaction(SPISettings(config_.spiHz, MSBFIRST, SPI_MODE0));
+  return true;
 }
 
 void ScreenFontFlash::deselect() {
-  SPI.endTransaction();
   digitalWrite(config_.csPin, HIGH);
+  if (device_ != nullptr) {
+    spi_device_release_bus(device_);
+  }
 }
 
 }  // namespace WallE

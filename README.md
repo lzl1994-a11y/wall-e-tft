@@ -1,9 +1,9 @@
 # Wali Display System (ESP32-S3) / 瓦力显示系统
 
 > **Triple-display firmware hub for the Wali multimodal interactive robot.**
-> Two synchronized circular eye displays + one main status screen, driven by a single ESP32-S3 over dual independent SPI buses. Communicates with a host SBC (RDK X3) via a lightweight serial text protocol.
+> Two synchronized circular eye displays + one main status screen, driven by a single ESP32-S3 over dual independent SPI buses. Communicates with a host SBC (RDK X3) through serial control and a persistent Wi-Fi/TCP camera-preview link.
 >
-> **瓦力多模态交互机器人的三屏固件中枢。** 单颗 ESP32-S3 通过双独立 SPI 总线同时驱动两块圆形眼屏和一块主状态屏，通过轻量串口文本协议与上位机 (RDK X3) 通信。
+> **瓦力多模态交互机器人的三屏固件中枢。** 单颗 ESP32-S3 通过双独立 SPI 总线同时驱动两块圆形眼屏和一块主状态屏，通过串口控制协议及常连接的 Wi-Fi/TCP 图像链路与上位机 (RDK X3) 通信。
 
 [![Platform](https://img.shields.io/badge/platform-ESP32--S3-6c3a1e?logo=espressif)](https://www.espressif.com)
 [![Framework](https://img.shields.io/badge/framework-Arduino%20%2B%20FreeRTOS-00979D?logo=arduino)](https://www.arduino.cc)
@@ -34,6 +34,7 @@
 - [Directory Structure / 目录结构](#directory-structure--目录结构)
 - [State Machine / 状态机](#state-machine--状态机)
 - [Serial Protocol / 串口协议](#serial-protocol--串口协议)
+- [Wi-Fi Camera Protocol / Wi-Fi 图像协议](docs/camera-stream.md)
 - [Rendering Pipelines / 渲染管线](#rendering-pipelines--渲染管线)
 - [Configuration Guide / 配置指南](#configuration-guide--配置指南)
 - [Build & Flash / 构建与烧录](#build--flash--构建与烧录)
@@ -67,7 +68,9 @@ Every line of code, every state transition, every SPI transaction serves to prov
 
 ## Key Features / 核心特性
 
-- **三屏并发渲染 / Triple-Display Concurrency** — 双 GC9A01 圆形眼屏（HSPI @ 40 MHz）+ 单 ST7789 主屏（VSPI @ 80 MHz），两条独立 SPI 总线物理隔离，互不抢占带宽。Two GC9A01 round eye displays (HSPI @ 40 MHz) + one ST7789 main display (VSPI @ 80 MHz) on physically isolated SPI buses.
+- **三屏并发渲染 / Triple-Display Concurrency** — 双 GC9A01 圆形眼屏（`SPI3_HOST` @ 40 MHz）+ 单 ST7789 主屏（`SPI2_HOST` @ 80 MHz），两条独立 SPI 总线物理隔离，互不抢占带宽。Two GC9A01 round eye displays on SPI3 + one ST7789 main display on SPI2, using physically separate buses.
+- **Wi-Fi 拍照预览 / Wi-Fi Camera Preview** — ESP32 作为常连接 TCP 客户端，接收上位机发送的 240×240 基线 JPEG；主屏实时预览 3 秒，再保持最后一帧 3 秒。The ESP32 remains connected as a TCP client, displays 240×240 baseline JPEG frames for three seconds, then holds the final frame for three seconds.
+- **双 SPI Host DMA / Dual-Host DMA** — 胸前 ST7789 和眼睛 GC9A01 分别使用 SPI2/SPI3 DMA；JPEG 压缩帧缓冲与眼睛画布放入 8 MB PSRAM。Chest and eye displays use independent SPI2/SPI3 DMA paths, with compressed JPEG buffers and the eye canvas in PSRAM.
 - **双眼同步动画 / Synchronized Eye Animation** — 内置 GIF 解码器基于 `AnimatedGIF` 库的非阻塞 API，每帧逐行解码，不阻塞 `loop()`；左右眼硬件 CS 镜像，天然同步。Built-in GIF decoder using `AnimatedGIF` non-blocking API; left and right eyes share CS via hardware mirroring for perfect sync.
 - **串口握手解耦 / Serial Handshake Decoupling** — `getname:WHO_ARE_YOU` → `WALL_E_TFT` 设备发现协议，上位机即插即识，无需硬编码设备 ID。Plug-and-play device discovery; no hardcoded device IDs.
 - **AI 对话流渲染 / AI Chat Stream Rendering** — 支持 `you:`（用户）/ `ai:`（AI）角色标签，GBK/GB2312 双字节中文字模从板载 SPI NOR Flash 实时读取，16×16 点阵按字形绘制到主屏。Role-tagged messages with real-time GBK/GB2312 Chinese glyph rendering from onboard SPI NOR Flash.
@@ -86,19 +89,19 @@ Every line of code, every state transition, every SPI transaction serves to prov
 
 | # | Component / 组件 | Model / 型号 | Resolution / 分辨率 | SPI Bus | Frequency / 频率 | Purpose / 用途 |
 |---|-----------|-------|------------|----------|-----------|---------|
-| 1 | MCU / 主控 | `ESP32-S3-DevKitC-1` | — | — | — | Dual SPI + UART / 双 SPI + 串口 |
-| 2 | Main Display / 主屏 | `ST7789 / ST7789V` IPS | 240 × 240 | VSPI | 80 MHz | Battery UI + AI Chat / 电量界面 + AI 对话 |
-| 3 | Left Eye / 左眼 | `GC9A01` Round TFT | 240 × 240 | HSPI | 40 MHz | Eye animation (GIF) / 左眼表情动画 |
-| 4 | Right Eye / 右眼 | `GC9A01` Round TFT | 240 × 240 | HSPI | 40 MHz | Mirror-synced with left / 与左眼 CS 镜像 |
-| 5 | Font Flash / 字库 Flash | SPI NOR Flash (onboard) | 4 MB | VSPI (shared) | 2 MHz | GBK 16×16 bitmap font / 点阵字库 |
-| 6 | Host SBC / 上位机 | RDK X3 / Linux Board | — | UART0 | 115200 bps | Command source / 命令下发 |
+| 1 | MCU / 主控 | `ESP32-S3-WROOM-1-N16R8` | — | — | — | 16 MB Flash + 8 MB OPI PSRAM |
+| 2 | Main Display / 主屏 | `ST7789 / ST7789V` IPS | 240 × 240 | SPI2 | 80 MHz | Battery UI + Chat + Camera / 电量 + 对话 + 图像 |
+| 3 | Left Eye / 左眼 | `GC9A01` Round TFT | 240 × 240 | SPI3 | 40 MHz | Eye animation (GIF) / 左眼表情动画 |
+| 4 | Right Eye / 右眼 | `GC9A01` Round TFT | 240 × 240 | SPI3 | 40 MHz | Mirror-synced with left / 与左眼 CS 镜像 |
+| 5 | Font Flash / 字库 Flash | SPI NOR Flash (onboard) | 4 MB | SPI2 (shared) | 2 MHz | GBK 16×16 bitmap font / 点阵字库 |
+| 6 | Host SBC / 上位机 | RDK X3 / Linux Board | — | UART0 + Wi-Fi | 115200 bps + TCP | Command + camera server / 命令 + 图像服务 |
 
 ### Pin Map / 引脚映射
 
 ```
 ESP32-S3 GPIO Layout / GPIO 布局
 ═══════════════════════════════════════════════════════════
-  SPI Bus 1 (VSPI)                    SPI Bus 2 (HSPI)
+  SPI2_HOST (main)                    SPI3_HOST (eyes)
   ┌─────────────────────┐            ┌─────────────────────┐
   │ SCK  → GPIO 18      │            │ SCK  → GPIO 9       │
   │ MOSI → GPIO 17      │            │ MOSI → GPIO 8       │
@@ -154,27 +157,27 @@ ESP32-S3 GPIO Layout / GPIO 布局
 ├──────────────────────────────────────────────────────────────────┤
 │                    Domain Layer / 领域层                           │
 │                                                                   │
-│  AppState.h              ChatMessage.h          ChatSession       │
-│  (Booting → Ready)       (Role + 1KB buffer)    (8-msg FIFO)     │
+│  AppState.h          ChatMessage/Session       ImageStreamEvent   │
+│  (Booting → Ready)   (Role + fixed FIFO)       (JPEG metadata)    │
 ├──────────────────────────────────────────────────────────────────┤
 │                   Ports Layer (Interfaces) / 接口层                │
 │                                                                   │
-│  ILogger       IInputPort       IDisplayPort    IEyeDisplayPort  │
-│  (Logging)      (Serial Input)   (Main Screen)   (Eye Animation) │
+│  ILogger       IInputPort       IDisplayPort    IEyeDisplayPort   │
+│  (Logging)     (Serial Input)   (Main Screen)   (Eye Animation)  │
 │                                                                   │
-│  IBitmapFontProvider                                              │
-│  (Font Data Source)                                               │
+│  IBitmapFontProvider       IImageStreamPort                       │
+│  (Font Data Source)        (Hot-standby JPEG input)               │
 ├──────────────────────────────────────────────────────────────────┤
 │                Adapters Layer (Implementations) / 适配器层          │
 │                                                                   │
 │  SerialLogger       SerialInputPort    St7789DisplayPort          │
-│  Gc9a01EyeDisplay   SharedSpiBus       ScreenFontFlash            │
+│  Gc9a01EyeDisplay   ScreenFontFlash    WifiImageStreamClient      │
 ├──────────────────────────────────────────────────────────────────┤
 │                    Core Library / 核心库                           │
 │                                                                   │
 │  lib/WallEDisplayCore/                                            │
 │  ├── SpiBusCoordinator   (Multi-device CS management / 多设备CS)  │
-│  ├── St7789Panel         (Arduino_HWSPI + Arduino_ST7789 wrapper) │
+│  ├── St7789Panel         (SPI2 DMA + Arduino_ST7789 wrapper)      │
 │  ├── Gc9a01Panel         (Arduino_ESP32SPI + Arduino_GC9A01)      │
 │  ├── TextRenderer        (Mixed ASCII/dual-byte renderer / 混合渲染)│
 │  ├── GifPlayer           (Non-blocking line-by-line decoder)      │
@@ -188,12 +191,15 @@ ESP32-S3 GPIO Layout / GPIO 布局
 // Instantiate all adapters at global scope / 全局作用域实例化
 SerialLogger logger;
 SerialInputPort input;
-SharedSpiBus spiBus;
-St7789DisplayPort display(&spiBus);
+St7789DisplayPort display;
 Gc9a01EyeDisplay eyeDisplay;
+Pca9685Driver pca9685(WallEConfig::kPca9685Sda,
+                      WallEConfig::kPca9685Scl);
+WifiImageStreamClient imageStream(makeImageStreamConfig());
 
 // Inject into AppController / 注入到控制器
-AppController controller(logger, input, display, eyeDisplay);
+AppController controller(logger, input, display, eyeDisplay, pca9685,
+                         imageStream);
 
 void setup() {
     eyeDisplay.begin();   // Optional: init eye displays / 选配：初始化眼睛屏
@@ -206,70 +212,62 @@ void loop() {
 }
 ```
 
-### FreeRTOS Task Topology (Planned) / FreeRTOS 任务拓扑（规划中）
+### FreeRTOS Task Topology / FreeRTOS 任务拓扑
 
-当前固件运行在 Arduino `loop()` 单线程中，足以应对当前负载。长远需要任务拆分：
-Currently running in single-threaded `loop()`, sufficient for current load. Long-term task split planned:
+耗时来源被拆成三个执行上下文，并通过固定容量队列交接数据：
+The main sources of work run in three execution contexts and exchange data through fixed-capacity queues:
 
 ```
-                    ┌──────────────────┐
-                    │    Comm_Task     │  Priority: HIGH / 高优先级
-                    │  UART RX         │  115200 bps serial receive
-                    │  Line Parser     │  CR/LF + 250ms timeout framing
-                    │  Command Decode  │  Case-insensitive prefix match
-                    └────────┬─────────┘
-                             │ Queue<InputPacket>
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-       ┌────────────┐ ┌────────────┐ ┌────────────┐
-       │ State_Task │ │  UI_Task   │ │ Eye_Task   │
-       │ Priority:  │ │ Priority:  │ │ Priority:  │
-       │   LOW      │ │  NORMAL    │ │   HIGH     │
-       │            │ │            │ │            │
-       │ State mach │ │ ST7789     │ │ GC9A01     │
-       │ 30s timeout│ │ Partial    │ │ GIF line-   │
-       │ Cmd routing│ │ refresh    │ │ by-line     │
-       └────────────┘ └────────────┘ └────────────┘
+Core 0                                  Arduino loop / UI core
+┌──────────────────────┐                ┌──────────────────────────┐
+│ Control task (P4)    │ Queue<Input>   │ AppController            │
+│ Serial + PCA9685     ├───────────────►│ state + ST7789 JPEG DMA  │
+└──────────────────────┘                │ + GC9A01 eye update      │
+                                        └────────────▲─────────────┘
+┌──────────────────────┐ Queue<Event>                │
+│ Image network (P2)   ├─────────────────────────────┘
+│ Wi-Fi/TCP + PSRAM    │
+└──────────────────────┘
 ```
 
-| Task | Priority / 优先级 | Rationale / 理由 |
-|------|----------|-----------|
-| `Comm_Task` | High / 高 | 串口硬件 FIFO 仅 128 bytes，必须在下一帧到达前消费 |
-| `Eye_Task` | High / 高 | 40 MHz SPI 逐行解码有实时性要求，帧间隔抖动需 < 2 ms |
-| `UI_Task` | Normal / 中 | 主屏支持局部刷新，延迟容忍度高 |
-| `State_Task` | Low / 低 | 纯逻辑，不涉及硬件 I/O |
+网络任务只接收压缩 JPEG 并写入双 PSRAM 帧槽；JPEG 解码和 ST7789 DMA 提交仍由 UI 上下文完成，因此显示驱动不会被两个任务同时调用。
+The network task only receives compressed JPEGs into two PSRAM slots. JPEG decoding and ST7789 DMA submission remain in the UI context, so two tasks never call the display driver concurrently.
 
 ### SPI Bus Topology / SPI 总线拓扑
 
 ```
 ESP32-S3
   │
-  ├── SPI Bus 1 (VSPI, 80 MHz)
+  ├── SPI2_HOST (80 MHz, DMA)
   │    ├── CS14 → ST7789 Main Display (240×240 IPS)
   │    └── CS11 → SPI NOR Flash (4MB font, shared SCK/MOSI/MISO)
   │         │
   │         └── SpiBusCoordinator: begin() pulls all HIGH → deselectAll() before access
   │
-  └── SPI Bus 2 (HSPI, 40 MHz)
+  └── SPI3_HOST (40 MHz, DMA)
        └── CS4  → GC9A01 Left + Right (hardware CS mirror, synchronized)
 ```
 
 **为什么眼睛屏用独立 SPI 总线？ / Why a separate SPI bus for the eyes?**
-主屏 ST7789 跑 80 MHz + 字库 Flash 读字模时 VSPI 已接近饱和。若眼睛屏共享同一总线，GIF 解码期间的 SPI 事务争抢会导致动画掉帧。独立 HSPI 总线从物理层隔离。
-The VSPI bus is near saturation with the main display at 80 MHz plus font flash reads. Sharing would cause SPI contention during GIF decoding, resulting in frame drops. The independent HSPI bus provides physical-layer isolation.
+主屏 ST7789 跑 80 MHz + 字库 Flash 读字模时 SPI2 已接近饱和。若眼睛屏共享同一总线，GIF 解码期间的 SPI 事务争抢会导致动画掉帧。独立 SPI3 总线从物理层隔离。
+SPI2 is near saturation with the main display at 80 MHz plus font-flash reads. Independent SPI3 isolates eye animation traffic at the physical-bus level.
 
 ---
 
 ## Directory Structure / 目录结构
 
 ```
-arduino-wall-e-display/
+wall-e-tft/
 │
 ├── platformio.ini                          # PlatformIO build config / 构建配置
-│   ├── board: esp32-s3-devkitc-1
+│   ├── board: walle-esp32s3-n16r8
 │   ├── framework: arduino
+│   ├── memory: N16R8 (16 MB Flash + 8 MB OPI PSRAM)
 │   ├── monitor_speed: 115200
 │   └── upload_speed: 921600
+│
+├── boards/
+│   └── walle-esp32s3-n16r8.json            # Production board profile / 板型
 │
 ├── README.md                               # This document / 本文档
 ├── .gitignore
@@ -280,7 +278,11 @@ arduino-wall-e-display/
 │   └── launch.json                         # Debug launch config
 │
 ├── docs/
+│   ├── camera-stream.md                    # Wi-Fi JPEG protocol / 图像协议
 │   └── manual-test.md                      # Manual test checklist / 手动测试清单
+│
+├── tools/
+│   └── camera_stream_server.py             # OpenCV reference server / 测试服务
 │
 ├── lib/
 │   └── WallEDisplayCore/                   # Reusable core library (zero coupling)
@@ -301,7 +303,8 @@ arduino-wall-e-display/
     ├── main.cpp                             # Arduino entry (setup/loop, DI)
     │
     ├── config/
-    │   └── Config.h                         # Global config center / 全局配置中心
+    │   ├── Config.h                         # Global config center / 全局配置中心
+    │   └── Secrets.example.h                # Local Wi-Fi config template
     │       ├── Pin definitions / 引脚定义
     │       ├── SPI frequencies / SPI 频率 (80M/40M/2M)
     │       ├── Serial params / 串口参数 (115200/512B/250ms)
@@ -311,13 +314,15 @@ arduino-wall-e-display/
     ├── domain/
     │   ├── AppState.h                       # App state enum (Booting/Ready)
     │   ├── ChatMessage.h                    # Single chat message (Role + 1KB)
-    │   └── ChatSession.h/cpp                # Chat session cache (8-msg FIFO)
+    │   ├── ChatSession.h/cpp                # Chat session cache (8-msg FIFO)
+    │   └── ImageStreamEvent.h               # Network-to-UI event metadata
     │
     ├── ports/
     │   ├── ILogger.h                        # Logging interface (info/warn/error)
     │   ├── IInputPort.h                     # Input interface (poll/drain + InputPacket)
     │   ├── IDisplayPort.h                   # Main display interface
-    │   └── IEyeDisplayPort.h               # Eye display interface (playZoom/update)
+    │   ├── IEyeDisplayPort.h               # Eye display interface (playZoom/update)
+    │   └── IImageStreamPort.h              # Hot-standby image input interface
     │
     ├── app/
     │   └── AppController.h/cpp              # State machine core / 状态机核心
@@ -331,13 +336,16 @@ arduino-wall-e-display/
         │   └── SerialLogger.h               # [INFO/WARN/ERROR] format logger
         ├── input/
         │   └── SerialInputPort.h/cpp        # Double-buffer + idle-timeout parser
+        ├── network/
+        │   └── WifiImageStreamClient.h/cpp # Persistent TCP client + PSRAM slots
         └── display/
             ├── SharedSpiBus.h               # Project-level SPI CS registry
             ├── St7789DisplayPort.h/cpp      # ST7789 main screen UI adapter
             │   ├── drawStartupSelfTest()    # Color bar self-test
             │   ├── drawPowerFrame()         # Battery frame (sun icon + title)
             │   ├── drawPowerBars()          # Battery bars partial refresh
-            │   └── render(ChatSession)      # Chat screen full render
+            │   ├── render(ChatSession)      # Chat screen full render
+            │   └── showJpegFrame()          # JPEGDEC → SPI2 DMA
             ├── Gc9a01EyeDisplay.h/cpp       # GC9A01 eye display adapter
             └── eyeimg.h                     # Built-in eye GIF (~4.36MB PROGMEM)
 ```
@@ -347,32 +355,26 @@ arduino-wall-e-display/
 ## State Machine / 状态机
 
 ```
-                    ┌─────────────────────────┐
-                    │         Booting          │
-                    │  • Serial logger init    │
-                    │  • Eye display init      │
-                    │    (optional / 可选)      │
-                    │  • Main SPI init         │
-                    │  • Color bar self-test   │
-                    │  • Font flash sig check  │
-                    │  • Input port init       │
-                    └────────────┬────────────┘
-                                 │ All success / 全部成功
-                                 ▼
-                    ┌─────────────────────────┐
-                    │          Ready           │
-                    │  • Accept handshake      │
-                    │  • Accept power: cmd     │
-                    │  • Wait for openchat:1   │
-                    └──────┬──────────┬───────┘
-                           │          │
-              openchat:1   │          │  openchat:0
-                           ▼          │  or / 或 30s idle
-                    ┌──────────────┐ │
-                    │    Chat      │◄┘
-                    │  • you:/ai:  │
-                    │  • Render    │
-                    └──────────────┘
+┌──────────┐       initialization       ┌──────────────┐
+│ Booting  ├───────────────────────────►│ Power screen │◄──────┐
+└──────────┘                            └──────┬───────┘       │
+                                              │ openchat:1     │ openchat:0
+                                              ▼                │ or 30s idle
+                                       ┌──────────────┐        │
+                                       │ Chat screen  ├────────┘
+                                       └──────┬───────┘
+                                              │
+                 STREAM_START from either screen
+                                              ▼
+                         ┌────────────────────────────┐
+                         │ Camera preview (3 seconds)│
+                         └─────────────┬──────────────┘
+                                       ▼
+                         ┌────────────────────────────┐
+                         │ Hold final frame (3 sec)   │
+                         └─────────────┬──────────────┘
+                                       │ restore saved screen
+                                       └────► Power or Chat
 ```
 
 **安全机制 / Safety Mechanisms:**
@@ -385,6 +387,8 @@ arduino-wall-e-display/
   Battery values > 100 are clamped to 100.
 - 聊天模式关闭时收到的消息直接丢弃并打印警告
   Messages received while chat is closed are dropped with a warning.
+- 图像流断开、超时或结束时，只要已有有效帧就进入最后一帧保持；没有有效帧则立即恢复原界面
+  On stream end, timeout, or disconnect, the last valid frame is held; if no valid frame exists, the prior screen is restored immediately.
 
 ---
 
@@ -591,43 +595,60 @@ The firmware performs **no UTF-8 → GBK conversion**. The host is responsible f
 
 ## Configuration Guide / 配置指南
 
-All tunable parameters in `src/config/Config.h` / 所有可调参数集中在:
+普通运行参数集中在 `src/config/Config.h`；Wi-Fi 凭据放在不会提交到 Git 的 `src/config/Secrets.h`。
+Runtime settings live in `src/config/Config.h`; Wi-Fi credentials belong in the Git-ignored `src/config/Secrets.h`.
 
 ```cpp
 // ──── Feature Flags / 功能开关 ────
-constexpr bool kEnableEyeDisplay     = true;   // Enable eye displays / 启用眼睛屏
-constexpr bool kUseScreenFontFlash   = true;   // Enable SPI flash font / 启用字库 Flash
+constexpr bool kEnableEyeDisplay = true;
+constexpr TextFontSource kMainTextFontSource =
+    TextFontSource::ScreenFontFlash;
 
 // ──── ST7789 Main Display / 主屏 ────
-constexpr int8_t kSt7789PinCs    = 14;
-constexpr int8_t kSt7789PinDc    = 13;
-constexpr int8_t kSt7789PinRst   = 15;
-constexpr int8_t kSt7789PinSck   = 18;
-constexpr int8_t kSt7789PinMosi  = 17;
-constexpr int8_t kSt7789PinMiso  = 16;
-constexpr int8_t kSt7789SpiFreq  = 80000000;   // 80 MHz
+constexpr int kTftCs = 14;
+constexpr int kTftDc = 13;
+constexpr int kTftRst = 15;
+constexpr int kTftSck = 18;
+constexpr int kTftMosi = 17;
+constexpr int kTftMiso = 16;
+constexpr uint32_t kTftSpiHz = 80000000;
 
 // ──── GC9A01 Eye Displays / 眼睛屏 ────
-constexpr int8_t kGc9a01PinCs    = 4;
-constexpr int8_t kGc9a01PinDc    = 5;
-constexpr int8_t kGc9a01PinRst   = 3;
-constexpr int8_t kGc9a01PinSck   = 9;
-constexpr int8_t kGc9a01PinMosi  = 8;
-constexpr int8_t kGc9a01SpiFreq  = 40000000;   // 40 MHz
+constexpr int eysTftCs = 4;
+constexpr int eysTftDc = 5;
+constexpr int eysTftRst = 3;
+constexpr int eysTftSck = 9;
+constexpr int eysTftMosi = 8;
+constexpr uint32_t keyeTftSpiHz = 40000000;
 
-// ──── Font Flash / 字库 Flash ────
-constexpr int8_t kScreenFontCs   = 11;
-constexpr int8_t kScreenFontFreq = 2000000;    // 2 MHz
-
-// ──── Serial / 串口 ────
-constexpr uint32_t kBaudRate      = 115200;
-constexpr size_t   kInputMaxBytes = 512;
-constexpr uint32_t kPacketTimeoutMs = 250;
-
-// ──── UI / 界面 ────
-constexpr uint32_t kChatIdleTimeoutMs = 30000;  // 30s
-constexpr size_t   kChatMaxMessages    = 8;
+// ──── Camera stream / 图像流 ────
+constexpr uint32_t kCameraStreamDurationMs = 3000;
+constexpr uint32_t kCameraHoldDurationMs = 3000;
+constexpr uint16_t kCameraTargetFps = 10;
+constexpr size_t kCameraMaxJpegBytes = 256 * 1024;
 ```
+
+首次配置时复制模板并填写局域网参数：
+
+```bash
+copy src\config\Secrets.example.h src\config\Secrets.h
+```
+
+```cpp
+// Networks are tried in this order; leave an SSID empty to skip it.
+#define WALLE_WIFI_1_SSID "robot-hotspot"
+#define WALLE_WIFI_1_PASSWORD "password-1"
+#define WALLE_WIFI_2_SSID "workshop-wifi"
+#define WALLE_WIFI_2_PASSWORD "password-2"
+#define WALLE_WIFI_3_SSID ""
+#define WALLE_WIFI_3_PASSWORD ""
+#define WALLE_IMAGE_SERVER_HOST "192.168.1.100"
+#define WALLE_IMAGE_SERVER_PORT 9000
+```
+
+三组网络按 1 → 2 → 3 的顺序轮询；每组等待 `kWifiReconnectMs`（默认5秒）后才切换下一组。SSID 为空的组会被跳过；三组都为空时，固件会正常运行原有串口/显示功能，但不会启动图像网络任务。完整协议和上位机接入方法见 [`docs/camera-stream.md`](docs/camera-stream.md)。
+
+上位机可通过既有 WTFT TCP 长连接下发完整的三组 Wi-Fi 与图像信号源地址/端口。新配置先在 RAM 暂存；`APPLY` ACK 发出 500 ms 后才切换。仅在新 Wi-Fi 与新 TCP 信号源在 60 秒内都接通时写入 active NVS；失败或试运行掉电均回到旧 active 配置。查询只返回 SSID、信号源地址和端口，绝不返回密码。详见 [`docs/camera-stream.md`](docs/camera-stream.md#online-network-configuration)。
 
 ---
 
@@ -643,7 +664,7 @@ constexpr size_t   kChatMaxMessages    = 8;
 ```bash
 # Clone / 克隆仓库
 git clone <your-repo-url>
-cd arduino-wall-e-display
+cd wall-e-tft
 
 # Install dependencies (auto) / 安装依赖（自动）
 pio pkg install
@@ -662,10 +683,13 @@ pio device monitor --baud 115200
 
 ```
 [INFO] Wall-E Arduino serial display boot
+[INFO] memory detected: flash=16777216 bytes, psram=8388608 bytes
 [INFO] ST7789 begin...OK
 [INFO] Font flash signature check...OK
 [INFO] TEXT OK
 [INFO] READY
+[INFO] main display async DMA ready
+[INFO] Wi-Fi image stream hot standby started
 ```
 
 At this point the host should send `getname:WHO_ARE_YOU` and receive `IAM:WALL_E_TFT`.
@@ -683,6 +707,7 @@ At this point the host should send `getname:WHO_ARE_YOU` and receive `IAM:WALL_E
 | Power Screen / 电量 | Display at 0%/50%/100%, partial refresh no flicker, bar segments correct |
 | Chat Screen / 聊天 | Single/multi message render, `you:`/`ai:` role colors, GBK Chinese, auto wrap, 8-msg FIFO eviction |
 | Eye Action / 眼睛 | `eyeaction:zoom` trigger, animation frame rate, non-blocking (still responds to `getname:`) |
+| Wi-Fi Camera / 图像 | 3-second 240×240 JPEG preview, 3-second final-frame hold, reconnect and malformed-frame rejection |
 | Failure / 异常 | Non-handshake cmd rejected before Ready, font missing → `TEXT ERR`, `power:150` clamped to 100 |
 
 ### Serial Command Send Examples / 串口命令发送示例
@@ -954,6 +979,8 @@ if __name__ == "__main__":
 ### Completed / 已完成
 
 - [x] Dual independent SPI bus architecture / 双独立 SPI 总线架构
+- [x] ESP32-S3-WROOM-1-N16R8 memory profile / 16 MB Flash + 8 MB OPI PSRAM 配置
+- [x] Independent SPI2/SPI3 display DMA / 主屏与眼睛屏独立 DMA
 - [x] ST7789 240×240 main display driver / ST7789 主屏驱动
 - [x] GC9A01 dual round eye display driver (CS mirror) / GC9A01 双圆形眼屏驱动
 - [x] `getname:WHO_ARE_YOU` / `WALL_E_TFT` serial handshake / 串口握手协议
@@ -967,11 +994,15 @@ if __name__ == "__main__":
 - [x] 30-second chat idle auto-return to power screen / 30 秒空闲超时回退
 - [x] Ports-Adapters layered architecture (DI, core library zero-coupling) / 端口-适配器分层架构
 - [x] SPI chip-select coordinator (SpiBusCoordinator table-driven) / SPI 片选协调器
-- [x] Manual test checklist (5 categories) / 手动测试清单
+- [x] Persistent Wi-Fi/TCP client with PSRAM JPEG slots / Wi-Fi 热备与 JPEG 双缓冲
+- [x] Online Wi-Fi/signal-server configuration with safe NVS rollback / 在线网络配置与 NVS 回滚
+- [x] 3-second camera preview + 3-second final-frame hold / 三秒预览与末帧保持
+- [x] Background Serial/PCA9685 and image-network tasks / 控制与图像网络后台任务
+- [x] Manual test checklist (6 categories) / 手动测试清单
 
 ### In Progress / Planned / 进行中 / 规划中
 
-- [ ] **FreeRTOS multi-task split / FreeRTOS 多任务拆分** — Comm / State / UI / Eye 4 tasks + inter-task queues
+- [ ] **Further UI/Eye task split / UI 与眼睛任务进一步拆分** — independent timing and instrumentation
 - [ ] **Independent CS for each eye / 双眼睛独立 CS** — left/right independent, async different expressions
 - [ ] **Serial frame CRC16 / 串口帧 CRC16** — data integrity in noisy environments
 - [ ] **SLIP/COBS framing / SLIP/COBS 分帧** — allow arbitrary bytes (including newlines) in message body
@@ -1010,8 +1041,4 @@ MIT
   <i>为瓦力多模态交互机器人系统而构建。</i><br><br>
   <b>Determinism over decoration. Stability over spectacle.</b><br>
   <b>工程确定性优先于视觉效果。系统稳定性优先于表面光鲜。</b>
-<<<<<<< HEAD
 </p>
-=======
-</p>
->>>>>>> b2df865885deb97ab4fd40a498cdefcd29166a1d

@@ -2,6 +2,8 @@
 #include "adapters/display/SharedSpiBus.h"
 #include "config/Config.h"
 
+#include <string.h>
+
 namespace WallE {
 
 namespace {
@@ -85,6 +87,8 @@ St7789Panel::Config makeMainPanelConfig() {
   config.mosiPin = WallEConfig::kTftMosi;
   config.misoPin = WallEConfig::kUseScreenFontFlash ? WallEConfig::kTftMiso : GFX_NOT_DEFINED;
   config.rstPin = WallEConfig::kTftRst;
+  config.spiHost = SPI2_HOST;
+  config.sharedInterface = true;
   config.width = WallEConfig::kScreenWidth;
   config.height = WallEConfig::kScreenHeight;
   config.rotation = 2;
@@ -104,6 +108,7 @@ ScreenFontFlash::Config makeScreenFontConfig() {
   config.misoPin = WallEConfig::kTftMiso;
   config.mosiPin = WallEConfig::kTftMosi;
   config.spiHz = WallEConfig::kScreenFontSpiHz;
+  config.spiHost = SPI2_HOST;
   config.ascii8x16Base = WallEConfig::kScreenFontAscii8x16Base;
   config.doubleByte16x16Base = WallEConfig::kScreenFontDoubleByte16x16Base;
   config.doubleByteFirst = WallEConfig::kScreenFontDoubleByteFirst;
@@ -134,6 +139,7 @@ bool St7789DisplayPort::begin() {
   if (gfx_ == nullptr) {
     return false;
   }
+  imageWriter_ = panel_.asyncWriter();
 
   gfx_->fillScreen(kBg);
   if (WallEConfig::kMainTftSelfTestOnBoot) {
@@ -365,6 +371,116 @@ void St7789DisplayPort::render(const ChatSession& session) {
     drawMessage(session.at(i), y);
   }
   deselectSharedSpiDevices();
+}
+
+void St7789DisplayPort::showCameraWaiting() {
+  if (gfx_ == nullptr) {
+    return;
+  }
+  deselectSharedSpiDevices();
+  gfx_->fillScreen(kBlack);
+  gfx_->setTextColor(kYellow, kBlack);
+  gfx_->setTextSize(2);
+  gfx_->setCursor(54, 96);
+  gfx_->print("CAMERA");
+  gfx_->setTextColor(kWhite, kBlack);
+  gfx_->setTextSize(1);
+  gfx_->setCursor(72, 126);
+  gfx_->print("WAITING FRAME");
+  deselectSharedSpiDevices();
+  frameDrawn_ = false;
+  powerFrameDrawn_ = false;
+  lastPowerThinBars_ = -1;
+}
+
+bool St7789DisplayPort::showJpegFrame(const uint8_t* data, size_t length) {
+  if (data == nullptr || length == 0 || length > INT32_MAX ||
+      imageWriter_ == nullptr) {
+    return false;
+  }
+  if (!jpegDecoder_.openRAM(const_cast<uint8_t*>(data),
+                            static_cast<int>(length), jpegDrawCallback)) {
+    return false;
+  }
+  jpegDecoder_.setUserPointer(this);
+  jpegDecoder_.setPixelType(RGB565_BIG_ENDIAN);
+  if (jpegDecoder_.getJPEGType() != JPEG_MODE_BASELINE ||
+      jpegDecoder_.getWidth() != WallEConfig::kScreenWidth ||
+      jpegDecoder_.getHeight() != WallEConfig::kScreenHeight) {
+    jpegDecoder_.close();
+    return false;
+  }
+
+  deselectSharedSpiDevices();
+  imageWriterBufferIndex_ = 0;
+  imageFrameFailed_ = false;
+  if (!imageWriter_->beginFrame()) {
+    jpegDecoder_.close();
+    return false;
+  }
+  const bool decoded = jpegDecoder_.decode(0, 0, 0) == 1;
+  imageWriter_->endFrame();
+  jpegDecoder_.close();
+
+  frameDrawn_ = false;
+  powerFrameDrawn_ = false;
+  lastPowerThinBars_ = -1;
+  return decoded && !imageFrameFailed_;
+}
+
+int St7789DisplayPort::jpegDrawCallback(JPEGDRAW* draw) {
+  if (draw == nullptr || draw->pUser == nullptr) {
+    return 0;
+  }
+  return static_cast<St7789DisplayPort*>(draw->pUser)->drawJpegBlock(draw);
+}
+
+int St7789DisplayPort::drawJpegBlock(JPEGDRAW* draw) {
+  if (draw == nullptr || draw->pPixels == nullptr || imageWriter_ == nullptr ||
+      imageFrameFailed_) {
+    return 0;
+  }
+
+  const int width = draw->iWidthUsed > 0 ? draw->iWidthUsed : draw->iWidth;
+  const int height = draw->iHeight;
+  if (width <= 0 || height <= 0 || draw->x < 0 || draw->y < 0 ||
+      draw->x + width > WallEConfig::kScreenWidth ||
+      draw->y + height > WallEConfig::kScreenHeight) {
+    imageFrameFailed_ = true;
+    return 0;
+  }
+
+  const size_t capacity = imageWriter_->bufferPixelCapacity();
+  const int rowsPerChunk = static_cast<int>(capacity / width);
+  if (rowsPerChunk <= 0 || imageWriter_->bufferCount() == 0) {
+    imageFrameFailed_ = true;
+    return 0;
+  }
+
+  for (int rowOffset = 0; rowOffset < height;) {
+    const int rows = min(rowsPerChunk, height - rowOffset);
+    const size_t bufferIndex =
+        imageWriterBufferIndex_++ % imageWriter_->bufferCount();
+    uint16_t* destination = imageWriter_->acquireBuffer(bufferIndex);
+    if (destination == nullptr) {
+      imageFrameFailed_ = true;
+      return 0;
+    }
+    for (int row = 0; row < rows; ++row) {
+      const uint16_t* source =
+          draw->pPixels + static_cast<size_t>(rowOffset + row) * draw->iWidth;
+      memcpy(destination + static_cast<size_t>(row) * width, source,
+             static_cast<size_t>(width) * sizeof(uint16_t));
+    }
+    if (!imageWriter_->queueRect(bufferIndex, draw->x,
+                                 draw->y + rowOffset, width, rows,
+                                 static_cast<size_t>(width) * rows)) {
+      imageFrameFailed_ = true;
+      return 0;
+    }
+    rowOffset += rows;
+  }
+  return 1;
 }
 
 /**

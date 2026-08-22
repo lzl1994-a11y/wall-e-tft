@@ -6,6 +6,7 @@
 #include "ports/IEyeDisplayPort.h"
 #include "ports/IDisplayPort.h"
 #include "ports/IInputPort.h"
+#include "ports/IImageStreamPort.h"
 #include "ports/ILogger.h"
 #include "ports/IPca9685Port.h"
 
@@ -37,7 +38,8 @@ class AppController {
    *                English: PCA9685 driver port reference.
    */
   AppController(ILogger& logger, IInputPort& input, IDisplayPort& display,
-                IEyeDisplayPort& eyeDisplay, IPca9685Port& pca9685);
+                IEyeDisplayPort& eyeDisplay, IPca9685Port& pca9685,
+                IImageStreamPort& imageStream);
 
   /**
    * 中文：初始化日志、主屏、输入端口和初始会话状态。
@@ -61,6 +63,8 @@ class AppController {
   enum class ScreenMode {
     Power,
     Chat,
+    CameraStreaming,
+    CameraHold,
   };
 
   /**
@@ -75,6 +79,11 @@ class AppController {
   void setChatOpen(bool open);
   void returnToPowerIfChatIdle();
   void processUiPacket(const InputPacket& packet);
+  void processImageStream();
+  void updateCameraState();
+  void beginCameraStream(const ImageStreamEvent& event);
+  void beginCameraHold();
+  void restoreScreenAfterCamera();
   bool handleControlPacket(const InputPacket& packet);
   bool enqueueUiPacket(const InputPacket& packet);
   void applyPca9685DefaultsIfNeeded();
@@ -106,6 +115,9 @@ class AppController {
   /// English: PCA9685 driver port; lifetime is owned elsewhere.
   IPca9685Port& pca9685_;
 
+  /// Persistent Wi-Fi/TCP JPEG input running in a background task.
+  IImageStreamPort& imageStream_;
+
   /// 中文：主屏当前会话缓存。
   /// English: Current chat session cache for the main display.
   ChatSession session_;
@@ -114,8 +126,16 @@ class AppController {
   /// English: Current application state, starting from Booting by default.
   AppState state_ = AppState::Booting;
   ScreenMode screenMode_ = ScreenMode::Power;
+  ScreenMode cameraReturnMode_ = ScreenMode::Power;
   uint8_t powerPercent_ = 0;
   uint32_t lastChatActivityMs_ = 0;
+  uint32_t cameraStreamStartedMs_ = 0;
+  uint32_t cameraLastFrameMs_ = 0;
+  uint32_t cameraHoldStartedMs_ = 0;
+  uint32_t cameraStreamDurationMs_ = WallEConfig::kCameraStreamDurationMs;
+  uint32_t cameraHoldDurationMs_ = WallEConfig::kCameraHoldDurationMs;
+  uint32_t cameraFramesDisplayed_ = 0;
+  bool cameraHasFrame_ = false;
   
   bool pca9685Rx_ = false;
   uint32_t bootMs_ = 0;

@@ -5,6 +5,8 @@
 #include "adapters/display/TextRenderer.h"
 #include "ports/IDisplayPort.h"
 
+#include <JPEGDEC.h>
+
 namespace WallE {
 
 /**
@@ -60,6 +62,9 @@ class St7789DisplayPort : public IDisplayPort {
    * @return 无 / None.
    */
   void render(const ChatSession& session) override;
+  void showCameraWaiting() override;
+  bool showJpegFrame(const uint8_t* data, size_t length) override;
+  bool imageDmaReady() const override { return imageWriter_ != nullptr; }
 
  private:
   /**
@@ -152,6 +157,9 @@ class St7789DisplayPort : public IDisplayPort {
    */
   const char* roleLabel(ChatRole role) const;
 
+  static int jpegDrawCallback(JPEGDRAW* draw);
+  int drawJpegBlock(JPEGDRAW* draw);
+
   /// 中文：ST7789 面板驱动，负责屏幕硬件初始化和 Arduino_GFX 对象生命周期。
   /// English: ST7789 panel driver responsible for hardware initialization and Arduino_GFX object lifetime.
   St7789Panel panel_;
@@ -167,6 +175,12 @@ class St7789DisplayPort : public IDisplayPort {
   /// 中文：独立文本渲染器，负责字节文本测量、换行和字形绘制。
   /// English: Dedicated text renderer for byte-text measuring, wrapping, and glyph drawing.
   TextRenderer textRenderer_;
+
+  /// JPEG decoder and the SPI2 DMA output used only in camera mode.
+  JPEGDEC jpegDecoder_;
+  IAsyncBitmapWriter* imageWriter_ = nullptr;
+  size_t imageWriterBufferIndex_ = 0;
+  bool imageFrameFailed_ = false;
 
   /// 中文：当前文字渲染资源是否可用。
   /// English: Whether the selected text rendering resource is usable.

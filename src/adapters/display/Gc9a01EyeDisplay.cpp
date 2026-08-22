@@ -18,7 +18,7 @@ Gc9a01Panel::Config makeEyePanelConfig() {
   config.mosiPin = WallEConfig::eysTftMosi;
   config.misoPin = GFX_NOT_DEFINED;
   config.rstPin = WallEConfig::eysTftRst;
-  config.spiHost = HSPI;
+  config.spiHost = SPI3_HOST;
   config.sharedInterface = true;
   config.width = WallEConfig::kScreenWidth;
   config.height = WallEConfig::kScreenHeight;

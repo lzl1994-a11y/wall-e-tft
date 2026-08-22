@@ -1,4 +1,5 @@
 #include "app/AppController.h"
+#include <stdio.h>
 #include <string.h>
 namespace WallE {
 
@@ -302,8 +303,14 @@ bool parsePca9685(const InputPacket& packet, int32_t* values) {
  *                English: PCA9685 driver port.
  */
 AppController::AppController(ILogger& logger, IInputPort& input, IDisplayPort& display,
-                             IEyeDisplayPort& eyeDisplay, IPca9685Port& pca9685)
-    : logger_(logger), input_(input), display_(display), eyeDisplay_(eyeDisplay), pca9685_(pca9685) {}
+                             IEyeDisplayPort& eyeDisplay, IPca9685Port& pca9685,
+                             IImageStreamPort& imageStream)
+    : logger_(logger),
+      input_(input),
+      display_(display),
+      eyeDisplay_(eyeDisplay),
+      pca9685_(pca9685),
+      imageStream_(imageStream) {}
 
 /**
  * 中文：启动应用；初始化日志、主屏、输入端口，并在主屏显示 READY 状态。
@@ -315,6 +322,12 @@ AppController::AppController(ILogger& logger, IInputPort& input, IDisplayPort& d
 void AppController::begin() {
   logger_.begin();
   logger_.info("Wall-E Arduino serial display boot");
+  char memorySummary[96];
+  snprintf(memorySummary, sizeof(memorySummary),
+           "memory detected: flash=%lu bytes, psram=%lu bytes",
+           static_cast<unsigned long>(ESP.getFlashChipSize()),
+           static_cast<unsigned long>(ESP.getPsramSize()));
+  logger_.info(memorySummary);
 
   if (!display_.begin()) {
     logger_.error("display init failed");
@@ -326,6 +339,18 @@ void AppController::begin() {
   session_.addText(ChatRole::System, "READY");
   setState(AppState::Ready);
   display_.showPower(powerPercent_);
+
+  if (display_.imageDmaReady()) {
+    logger_.info("main display async DMA ready");
+  } else {
+    logger_.warn("main display image DMA unavailable");
+  }
+
+  if (imageStream_.begin()) {
+    logger_.info("Wi-Fi image stream hot standby started");
+  } else {
+    logger_.warn("Wi-Fi image stream disabled; check PSRAM and Secrets.h");
+  }
 
   pca9685_.begin();
   
@@ -363,6 +388,7 @@ void AppController::begin() {
  */
 void AppController::loop() {
   eyeDisplay_.update();
+  processImageStream();
 
   QueuedInputPacket queuedPacket;
   if (controlTaskStarted_) {
@@ -383,8 +409,145 @@ void AppController::loop() {
     }
   }
 
+  updateCameraState();
   returnToPowerIfChatIdle();
-  delay(1);
+  if (screenMode_ == ScreenMode::CameraStreaming) {
+    taskYIELD();
+  } else {
+    delay(1);
+  }
+}
+
+void AppController::processImageStream() {
+  ImageStreamEvent event;
+  if (!imageStream_.poll(event)) {
+    return;
+  }
+
+  switch (event.type) {
+    case ImageStreamEventType::Connected:
+      logger_.info("image server connected");
+      return;
+    case ImageStreamEventType::Disconnected:
+      logger_.warn("image server disconnected");
+      if (screenMode_ == ScreenMode::CameraStreaming) {
+        beginCameraHold();
+      }
+      return;
+    case ImageStreamEventType::StreamStarted:
+      beginCameraStream(event);
+      return;
+    case ImageStreamEventType::FrameReady: {
+      if (screenMode_ == ScreenMode::CameraStreaming && event.data != nullptr &&
+          event.length > 0) {
+        if (display_.showJpegFrame(event.data, event.length)) {
+          cameraHasFrame_ = true;
+          cameraLastFrameMs_ = millis();
+          ++cameraFramesDisplayed_;
+        } else {
+          logger_.warn("camera JPEG frame decode failed");
+        }
+      }
+      imageStream_.releaseFrame(event.frameToken);
+      return;
+    }
+    case ImageStreamEventType::StreamEnded:
+      if (screenMode_ == ScreenMode::CameraStreaming) {
+        beginCameraHold();
+      }
+      return;
+    case ImageStreamEventType::ProtocolError:
+      logger_.warn("image stream protocol error");
+      return;
+  }
+}
+
+void AppController::beginCameraStream(const ImageStreamEvent& event) {
+  if (screenMode_ != ScreenMode::CameraStreaming &&
+      screenMode_ != ScreenMode::CameraHold) {
+    cameraReturnMode_ = screenMode_ == ScreenMode::Chat ? ScreenMode::Chat
+                                                        : ScreenMode::Power;
+  }
+  screenMode_ = ScreenMode::CameraStreaming;
+  cameraStreamStartedMs_ = millis();
+  cameraLastFrameMs_ = cameraStreamStartedMs_;
+  cameraHoldStartedMs_ = 0;
+  cameraFramesDisplayed_ = 0;
+  cameraHasFrame_ = false;
+  cameraStreamDurationMs_ = event.streamDurationMs > 0
+                                ? min(event.streamDurationMs,
+                                      static_cast<uint32_t>(10000))
+                                : WallEConfig::kCameraStreamDurationMs;
+  cameraHoldDurationMs_ = event.holdDurationMs > 0
+                              ? min(event.holdDurationMs,
+                                    static_cast<uint32_t>(10000))
+                              : WallEConfig::kCameraHoldDurationMs;
+  display_.showCameraWaiting();
+  logger_.info("camera preview started");
+}
+
+void AppController::beginCameraHold() {
+  if (screenMode_ != ScreenMode::CameraStreaming) {
+    return;
+  }
+  if (!cameraHasFrame_) {
+    logger_.warn("camera preview ended without a valid frame");
+    restoreScreenAfterCamera();
+    return;
+  }
+  uint32_t elapsedMs = static_cast<uint32_t>(millis() -
+                                             cameraStreamStartedMs_);
+  if (elapsedMs == 0) {
+    elapsedMs = 1;
+  }
+  const uint32_t fpsTenths =
+      static_cast<uint32_t>((static_cast<uint64_t>(cameraFramesDisplayed_) *
+                             10000ULL) /
+                            elapsedMs);
+  char previewSummary[80];
+  snprintf(previewSummary, sizeof(previewSummary),
+           "camera preview: %lu frames, %lu.%lu fps",
+           static_cast<unsigned long>(cameraFramesDisplayed_),
+           static_cast<unsigned long>(fpsTenths / 10),
+           static_cast<unsigned long>(fpsTenths % 10));
+  logger_.info(previewSummary);
+  screenMode_ = ScreenMode::CameraHold;
+  cameraHoldStartedMs_ = millis();
+  logger_.info("camera final frame hold started");
+}
+
+void AppController::updateCameraState() {
+  const uint32_t now = millis();
+  if (screenMode_ == ScreenMode::CameraStreaming) {
+    const bool streamDeadlineReached =
+        now - cameraStreamStartedMs_ >=
+        cameraStreamDurationMs_ + WallEConfig::kCameraStreamGraceMs;
+    const bool frameStreamStalled =
+        cameraHasFrame_ &&
+        now - cameraLastFrameMs_ >= WallEConfig::kCameraFrameIdleTimeoutMs;
+    if (streamDeadlineReached || frameStreamStalled) {
+      beginCameraHold();
+    }
+    return;
+  }
+  if (screenMode_ == ScreenMode::CameraHold &&
+      now - cameraHoldStartedMs_ >= cameraHoldDurationMs_) {
+    restoreScreenAfterCamera();
+  }
+}
+
+void AppController::restoreScreenAfterCamera() {
+  if (cameraReturnMode_ == ScreenMode::Chat) {
+    screenMode_ = ScreenMode::Chat;
+    display_.render(session_);
+    display_.showStatus(state_);
+  } else {
+    screenMode_ = ScreenMode::Power;
+    display_.showPower(powerPercent_);
+  }
+  cameraHasFrame_ = false;
+  cameraFramesDisplayed_ = 0;
+  logger_.info("camera preview complete");
 }
 
 void AppController::processUiPacket(const InputPacket& packet) {
@@ -442,14 +605,21 @@ void AppController::processUiPacket(const InputPacket& packet) {
     return;
   }
 
-  if (screenMode_ != ScreenMode::Chat) {
+  const bool chatVisible = screenMode_ == ScreenMode::Chat;
+  const bool chatRestoresAfterCamera =
+      (screenMode_ == ScreenMode::CameraStreaming ||
+       screenMode_ == ScreenMode::CameraHold) &&
+      cameraReturnMode_ == ScreenMode::Chat;
+  if (!chatVisible && !chatRestoresAfterCamera) {
     logger_.warn("chat message dropped while chat closed");
     return;
   }
 
   lastChatActivityMs_ = millis();
   session_.add(role, messageData, messageLength);
-  display_.render(session_);
+  if (chatVisible) {
+    display_.render(session_);
+  }
   setState(AppState::Ready);
 }
 
@@ -542,6 +712,14 @@ void AppController::setState(AppState state) {
 }
 
 void AppController::setChatOpen(bool open) {
+  if (screenMode_ == ScreenMode::CameraStreaming ||
+      screenMode_ == ScreenMode::CameraHold) {
+    cameraReturnMode_ = open ? ScreenMode::Chat : ScreenMode::Power;
+    if (open) {
+      lastChatActivityMs_ = millis();
+    }
+    return;
+  }
   if (open) {
     screenMode_ = ScreenMode::Chat;
     lastChatActivityMs_ = millis();
@@ -555,12 +733,21 @@ void AppController::setChatOpen(bool open) {
 }
 
 void AppController::returnToPowerIfChatIdle() {
-  if (screenMode_ != ScreenMode::Chat) {
+  const bool visibleChat = screenMode_ == ScreenMode::Chat;
+  const bool deferredChat =
+      (screenMode_ == ScreenMode::CameraStreaming ||
+       screenMode_ == ScreenMode::CameraHold) &&
+      cameraReturnMode_ == ScreenMode::Chat;
+  if (!visibleChat && !deferredChat) {
     return;
   }
 
   if (millis() - lastChatActivityMs_ >= WallEConfig::kChatIdleReturnMs) {
-    setChatOpen(false);
+    if (deferredChat) {
+      cameraReturnMode_ = ScreenMode::Power;
+    } else {
+      setChatOpen(false);
+    }
   }
 }
 
