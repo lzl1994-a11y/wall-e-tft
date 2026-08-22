@@ -51,11 +51,12 @@ apply_network_config(connection, sequence=apply_sequence)  # pre-switch ACK
 terminal = wait_for_network_config_terminal(new_connection, apply_sequence)
 ```
 
-The command-line configuration mode is deliberately one-shot: it sends one
-SET/APPLY transaction and exits instead of applying the same candidate again
-when the ESP32 reconnects. The terminal result is delivered on a new TCP
-connection: result `2` reaches the candidate signal server, while result `5`
-or `6` reaches the restored old server. The destination server must retain the
+The command-line configuration mode is deliberately one-shot: it never applies
+the candidate a second time when the ESP32 reconnects. If the signal-server
+port stays the same, the script keeps listening for up to 65 seconds and prints
+the terminal result from the new connection. When changing the port, start the
+destination server before APPLY; that server receives result `2`, while result
+`5` or `6` reaches the restored old server. A production server must retain the
 APPLY sequence and correlate it across ESP32 reconnects (normally by device ID).
 
 ```bash

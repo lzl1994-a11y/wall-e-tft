@@ -461,12 +461,38 @@ def main() -> None:
         ).start()
 
     stream_sequence = 0
+    pending_apply_sequence: int | None = None
+    pending_apply_deadline = 0.0
     try:
         while True:
-            sock, address = server.accept()
+            if pending_apply_sequence is None:
+                server.settimeout(None)
+            else:
+                remaining = pending_apply_deadline - time.monotonic()
+                if remaining <= 0:
+                    print("Timed out waiting for the terminal APPLY result")
+                    return
+                server.settimeout(remaining)
+            try:
+                sock, address = server.accept()
+            except socket.timeout:
+                print("Timed out waiting for the ESP32 to reconnect")
+                return
             connection = DeviceConnection(sock, address)
             print(f"ESP32 connected from {address[0]}:{address[1]}")
             try:
+                if pending_apply_sequence is not None:
+                    remaining = max(
+                        0.1, pending_apply_deadline - time.monotonic()
+                    )
+                    terminal = wait_for_network_config_terminal(
+                        connection, pending_apply_sequence, timeout=remaining
+                    )
+                    print(
+                        "NETWORK_CONFIG_APPLY completed "
+                        f"result={terminal.result} detail={terminal.detail}"
+                    )
+                    return
                 if args.query_network_config:
                     status = query_network_config(connection)
                     print(f"Active signal server: {status.host}:{status.port}; "
@@ -485,6 +511,19 @@ def main() -> None:
                             print(
                                 "Trial started; terminal RESULT uses sequence "
                                 f"{apply_sequence} on the destination server connection"
+                            )
+                            if requested_config.port == args.port:
+                                pending_apply_sequence = apply_sequence
+                                pending_apply_deadline = time.monotonic() + 65.0
+                                print(
+                                    "Keeping this port open for the ESP32 "
+                                    "terminal reconnect"
+                                )
+                                continue
+                            print(
+                                "The signal-server port is changing; keep the "
+                                "destination server running to receive the "
+                                "terminal RESULT"
                             )
                 if args.query_network_config or requested_config is not None:
                     # A configuration CLI invocation handles one connected unit.
