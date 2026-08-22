@@ -13,11 +13,14 @@ constexpr uint8_t kWriteMemory = 0x2C;
 }  // namespace
 
 Esp32AsyncDmaWriter::Esp32AsyncDmaWriter(int8_t dcPin, int8_t csPin,
-                                         uint8_t spiHost, uint32_t speedHz)
+                                         uint8_t spiHost, uint32_t speedHz,
+                                         int16_t xOffset, int16_t yOffset)
     : dcPin_(dcPin),
       csPin_(csPin),
       spiHost_(spiHost),
-      speedHz_(speedHz) {}
+      speedHz_(speedHz),
+      xOffset_(xOffset),
+      yOffset_(yOffset) {}
 
 Esp32AsyncDmaWriter::~Esp32AsyncDmaWriter() {
   end();
@@ -128,14 +131,16 @@ bool Esp32AsyncDmaWriter::queueRect(size_t bufferIndex, int16_t x,
     return false;
   }
 
-  const uint16_t xEnd = static_cast<uint16_t>(x + width - 1);
-  const uint16_t yEnd = static_cast<uint16_t>(y + height - 1);
-  slot.columnData[0] = static_cast<uint8_t>(x >> 8);
-  slot.columnData[1] = static_cast<uint8_t>(x);
+  const uint16_t xStart = static_cast<uint16_t>(x + xOffset_);
+  const uint16_t yStart = static_cast<uint16_t>(y + yOffset_);
+  const uint16_t xEnd = static_cast<uint16_t>(xStart + width - 1);
+  const uint16_t yEnd = static_cast<uint16_t>(yStart + height - 1);
+  slot.columnData[0] = static_cast<uint8_t>(xStart >> 8);
+  slot.columnData[1] = static_cast<uint8_t>(xStart);
   slot.columnData[2] = static_cast<uint8_t>(xEnd >> 8);
   slot.columnData[3] = static_cast<uint8_t>(xEnd);
-  slot.rowData[0] = static_cast<uint8_t>(y >> 8);
-  slot.rowData[1] = static_cast<uint8_t>(y);
+  slot.rowData[0] = static_cast<uint8_t>(yStart >> 8);
+  slot.rowData[1] = static_cast<uint8_t>(yStart);
   slot.rowData[2] = static_cast<uint8_t>(yEnd >> 8);
   slot.rowData[3] = static_cast<uint8_t>(yEnd);
 

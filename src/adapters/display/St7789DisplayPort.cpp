@@ -1,7 +1,9 @@
 #include "adapters/display/St7789DisplayPort.h"
 #include "adapters/display/SharedSpiBus.h"
+#include "adapters/log/SerialOutput.h"
 #include "config/Config.h"
 
+#include <stdio.h>
 #include <string.h>
 
 namespace WallE {
@@ -78,6 +80,42 @@ constexpr int kPowerThinTopY = 70;
 constexpr int kPowerThinCount = 7;
 constexpr int kPowerThickY = 194;
 constexpr int kPowerThickH = 24;
+
+const char* fontInitStatusText(ScreenFontFlash::InitStatus status) {
+  switch (status) {
+    case ScreenFontFlash::InitStatus::NotStarted: return "not-started";
+    case ScreenFontFlash::InitStatus::InvalidConfig: return "invalid-config";
+    case ScreenFontFlash::InitStatus::AddDeviceFailed: return "add-device-failed";
+    case ScreenFontFlash::InitStatus::WakeFailed: return "wake-failed";
+    case ScreenFontFlash::InitStatus::SignatureReadFailed: return "signature-read-failed";
+    case ScreenFontFlash::InitStatus::SignatureMismatch: return "signature-mismatch";
+    case ScreenFontFlash::InitStatus::Ready: return "ready";
+  }
+  return "unknown";
+}
+
+void logHexBytes(const char* label, const uint8_t* data, size_t length) {
+  char line[160] = {0};
+  int used = snprintf(line, sizeof(line), "%s", label);
+  if (used < 0) return;
+  size_t offset = static_cast<size_t>(used);
+  for (size_t i = 0; i < length && offset + 4 < sizeof(line); ++i) {
+    used = snprintf(line + offset, sizeof(line) - offset, " %02X", data[i]);
+    if (used < 0) break;
+    offset += static_cast<size_t>(used);
+  }
+  serialPrintln(line);
+}
+
+bool glyphHasBitmapData(const uint8_t* data, size_t length) {
+  bool allZero = true;
+  bool allOnes = true;
+  for (size_t i = 0; i < length; ++i) {
+    allZero = allZero && data[i] == 0x00;
+    allOnes = allOnes && data[i] == 0xFF;
+  }
+  return !allZero && !allOnes;
+}
 
 St7789Panel::Config makeMainPanelConfig() {
   St7789Panel::Config config;
@@ -157,8 +195,29 @@ bool St7789DisplayPort::begin() {
   fontOk_ = true;
   if (WallEConfig::kUseScreenFontFlash) {
     const bool screenFontStarted = screenFont_.begin();
-    fontOk_ = screenFontStarted;
-    if (screenFontStarted) {
+    char initLine[96] = {0};
+    snprintf(initLine, sizeof(initLine), "font flash init: %s",
+             fontInitStatusText(screenFont_.initStatus()));
+    serialLogLine(screenFontStarted ? "INFO" : "ERROR", initLine);
+    if (screenFont_.signatureRead()) {
+      logHexBytes("font signature hex:", screenFont_.signatureBytes(),
+                  ScreenFontFlash::kSignatureLength);
+    }
+
+    uint8_t probe[32] = {0};
+    const bool probeRead =
+        screenFontStarted && screenFont_.readDoubleByte16x16(0xC4, 0xE3, probe,
+                                                             sizeof(probe));
+    const bool probeValid = probeRead && glyphHasBitmapData(probe, sizeof(probe));
+    if (probeRead) {
+      logHexBytes("font glyph C4E3 hex:", probe, sizeof(probe));
+    }
+    serialLogLine(probeValid ? "INFO" : "ERROR",
+                  probeValid ? "font glyph C4E3 probe: valid"
+                             : "font glyph C4E3 probe: invalid");
+
+    fontOk_ = screenFontStarted && probeValid;
+    if (fontOk_) {
       textRenderer_.setFontProvider(&screenFont_);
     }
   }
@@ -404,21 +463,28 @@ bool St7789DisplayPort::showJpegFrame(const uint8_t* data, size_t length) {
   }
   jpegDecoder_.setUserPointer(this);
   jpegDecoder_.setPixelType(RGB565_BIG_ENDIAN);
-  if (jpegDecoder_.getJPEGType() != JPEG_MODE_BASELINE ||
-      jpegDecoder_.getWidth() != WallEConfig::kScreenWidth ||
-      jpegDecoder_.getHeight() != WallEConfig::kScreenHeight) {
+  const int imageWidth = jpegDecoder_.getWidth();
+  const int imageHeight = jpegDecoder_.getHeight();
+  if (jpegDecoder_.getJPEGType() != JPEG_MODE_BASELINE || imageWidth <= 0 ||
+      imageHeight <= 0 || imageWidth > WallEConfig::kScreenWidth ||
+      imageHeight > WallEConfig::kScreenHeight) {
     jpegDecoder_.close();
     return false;
   }
 
   deselectSharedSpiDevices();
+  // JPEG frames may be smaller than the square TFT. Clear first, then center
+  // the decoded image so a 4:3 camera frame gets symmetrical black bars.
+  gfx_->fillScreen(kBlack);
   imageWriterBufferIndex_ = 0;
   imageFrameFailed_ = false;
   if (!imageWriter_->beginFrame()) {
     jpegDecoder_.close();
     return false;
   }
-  const bool decoded = jpegDecoder_.decode(0, 0, 0) == 1;
+  const int imageX = (WallEConfig::kScreenWidth - imageWidth) / 2;
+  const int imageY = (WallEConfig::kScreenHeight - imageHeight) / 2;
+  const bool decoded = jpegDecoder_.decode(imageX, imageY, 0) == 1;
   imageWriter_->endFrame();
   jpegDecoder_.close();
 

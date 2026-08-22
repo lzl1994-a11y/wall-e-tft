@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""WALL-E TFT camera stream server.
+"""WALL-E TFT camera/video stream server.
 
 The ESP32 is a persistent TCP client. Press Enter to send a three-second
 240x240 JPEG preview; the firmware keeps the final frame for three seconds.
@@ -102,21 +102,29 @@ class DeviceConnection:
 
 
 
-def square_crop(frame):
+def fit_within_square(frame, size: int = 240):
+    """Scale a frame to fit a square while preserving its original aspect ratio."""
+    import cv2
+
     height, width = frame.shape[:2]
-    side = min(width, height)
-    left = (width - side) // 2
-    top = (height - side) // 2
-    return frame[top:top + side, left:left + side]
+    if height <= 0 or width <= 0:
+        raise ValueError("camera frame has invalid dimensions")
+    scale = min(size / width, size / height)
+    scaled_width = max(1, round(width * scale))
+    scaled_height = max(1, round(height * scale))
+    resized = cv2.resize(frame, (scaled_width, scaled_height),
+                         interpolation=cv2.INTER_AREA)
+    return resized
 
 
 def send_preview(connection: DeviceConnection, capture, *, fps: int = 10,
                  duration_ms: int = 3000, hold_ms: int = 3000,
-                 jpeg_quality: int = 70, stream_sequence: int = 1) -> int:
+                 jpeg_quality: int = 70, stream_sequence: int = 1,
+                 loop_media: bool = False) -> int:
     """Capture and send one timed preview. Returns the number of JPEG frames."""
     import cv2
 
-    fps = max(1, min(fps, 20))
+    fps = max(1, min(fps, 30))
     duration_ms = max(250, min(duration_ms, 10_000))
     hold_ms = max(0, min(hold_ms, 10_000))
     jpeg_quality = max(30, min(jpeg_quality, 90))
@@ -133,10 +141,12 @@ def send_preview(connection: DeviceConnection, capture, *, fps: int = 10,
         next_frame_at = time.monotonic()
         while connection.alive and time.monotonic() < deadline:
             ok, frame = capture.read()
+            if not ok and loop_media:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ok, frame = capture.read()
             if not ok:
-                raise RuntimeError("camera capture failed")
-            frame = cv2.resize(square_crop(frame), (240, 240),
-                               interpolation=cv2.INTER_AREA)
+                raise RuntimeError("media capture failed")
+            frame = fit_within_square(frame)
             encoded, jpeg = cv2.imencode(
                 ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
             )
@@ -176,11 +186,29 @@ def open_camera(index: int):
     return capture
 
 
+def open_video(path: str):
+    try:
+        import cv2
+    except ImportError as exc:
+        raise SystemExit(
+            "OpenCV is required: python -m pip install opencv-python"
+        ) from exc
+
+    capture = cv2.VideoCapture(path)
+    if not capture.isOpened():
+        raise SystemExit(f"Could not open video file: {path}")
+    return capture
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bind", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument("--camera", type=int, default=0)
+    parser.add_argument(
+        "--video", metavar="PATH",
+        help="read a local video file instead of the camera; playback loops",
+    )
     parser.add_argument("--fps", type=int, default=10)
     parser.add_argument("--duration-ms", type=int, default=3000)
     parser.add_argument("--hold-ms", type=int, default=3000)
@@ -188,6 +216,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--auto-on-connect", action="store_true",
         help="send one preview immediately after every ESP32 connection",
+    )
+    parser.add_argument(
+        "--continuous", action="store_true",
+        help="continuously send previews while the ESP32 remains connected",
     )
     return parser.parse_args()
 
@@ -203,14 +235,17 @@ def stdin_trigger_loop(triggers: "queue.Queue[bool]") -> None:
 
 def main() -> None:
     args = parse_args()
-    capture = open_camera(args.camera)
+    if args.video:
+        capture = open_video(args.video)
+    else:
+        capture = open_camera(args.camera)
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((args.bind, args.port))
     server.listen(1)
     print(f"Waiting for ESP32 on {args.bind}:{args.port}")
     triggers: "queue.Queue[bool]" = queue.Queue()
-    if not args.auto_on_connect:
+    if not args.auto_on_connect and not args.continuous:
         threading.Thread(
             target=stdin_trigger_loop, args=(triggers,), daemon=True
         ).start()
@@ -229,7 +264,7 @@ def main() -> None:
             try:
                 first = True
                 while connection.alive:
-                    if args.auto_on_connect and first:
+                    if args.continuous or (args.auto_on_connect and first):
                         first = False
                     else:
                         try:
@@ -245,6 +280,7 @@ def main() -> None:
                         hold_ms=args.hold_ms,
                         jpeg_quality=args.jpeg_quality,
                         stream_sequence=stream_sequence,
+                        loop_media=bool(args.video),
                     )
                     print(f"Sent {count} frames; TFT now holds the final frame")
             except (ConnectionError, OSError, RuntimeError) as exc:

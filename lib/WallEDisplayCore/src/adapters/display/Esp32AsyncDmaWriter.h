@@ -17,7 +17,8 @@ class Esp32AsyncDmaWriter final : public IAsyncBitmapWriter {
   static constexpr size_t kPixelsPerBuffer = kMaxWidth * kChunkRows;
 
   Esp32AsyncDmaWriter(int8_t dcPin, int8_t csPin, uint8_t spiHost,
-                      uint32_t speedHz);
+                      uint32_t speedHz, int16_t xOffset = 0,
+                      int16_t yOffset = 0);
   ~Esp32AsyncDmaWriter() override;
 
   bool begin();
@@ -63,6 +64,8 @@ class Esp32AsyncDmaWriter final : public IAsyncBitmapWriter {
   int8_t csPin_;
   uint8_t spiHost_;
   uint32_t speedHz_;
+  int16_t xOffset_;
+  int16_t yOffset_;
   spi_device_handle_t device_ = nullptr;
   BufferSlot buffers_[kBufferCount];
   size_t pendingTransactions_ = 0;

@@ -4,3 +4,5 @@ build.log
 src/config/Secrets.h
 __pycache__/
 *.pyc
+.bilibili-live-frame.png
+assets/sample-videos/

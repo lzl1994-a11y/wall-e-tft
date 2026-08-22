@@ -22,8 +22,9 @@ constexpr size_t kDoubleByte16x16Size = 32;
 
 /// 中文：字库镜像签名，用于确认 Flash 中烧录的是预期资源。
 /// English: Font image signature used to verify the flash contains the expected resource.
-const uint8_t kSignature[] = {'J', 'Y', 'C', '-', '4', 'M', 'b', 'B', 'y', 't', 'e', '-',
-                              'F', 'O', 'N', 'T', '-', 'F', 'L', 'A', 'S', 'H'};
+const uint8_t kSignature[ScreenFontFlash::kSignatureLength] = {
+    'J', 'Y', 'C', '-', '4', 'M', 'b', 'B', 'y', 't', 'e', '-',
+    'F', 'O', 'N', 'T', '-', 'F', 'L', 'A', 'S', 'H'};
 }  // namespace
 
 ScreenFontFlash::ScreenFontFlash(const Config& config) : config_(config) {}
@@ -38,8 +39,12 @@ ScreenFontFlash::~ScreenFontFlash() {
 bool ScreenFontFlash::begin() {
   initialized_ = false;
   available_ = false;
+  initStatus_ = InitStatus::NotStarted;
+  signatureRead_ = false;
+  memset(signatureBytes_, 0, sizeof(signatureBytes_));
   if (config_.csPin < 0 || config_.sckPin < 0 || config_.misoPin < 0 ||
       config_.mosiPin < 0) {
+    initStatus_ = InitStatus::InvalidConfig;
     return false;
   }
 
@@ -55,10 +60,12 @@ bool ScreenFontFlash::begin() {
   if (spi_bus_add_device(static_cast<spi_host_device_t>(config_.spiHost),
                          &deviceConfig, &device_) != ESP_OK) {
     device_ = nullptr;
+    initStatus_ = InitStatus::AddDeviceFailed;
     return false;
   }
 
   if (!select()) {
+    initStatus_ = InitStatus::AddDeviceFailed;
     return false;
   }
   uint8_t wakeBytes[] = {kReleasePowerDown, 0x00, 0x00, 0x00, 0x00};
@@ -68,21 +75,29 @@ bool ScreenFontFlash::begin() {
   const esp_err_t wakeResult = spi_device_polling_transmit(device_, &wake);
   deselect();
   if (wakeResult != ESP_OK) {
+    initStatus_ = InitStatus::WakeFailed;
     return false;
   }
   delay(2);
 
   initialized_ = true;
   available_ = checkSignature();
-  return true;
+  if (!signatureRead_) {
+    initStatus_ = InitStatus::SignatureReadFailed;
+  } else if (!available_) {
+    initStatus_ = InitStatus::SignatureMismatch;
+  } else {
+    initStatus_ = InitStatus::Ready;
+  }
+  return available_;
 }
 
 bool ScreenFontFlash::checkSignature() {
-  uint8_t data[sizeof(kSignature)] = {0};
-  if (!read(0, data, sizeof(data))) {
+  signatureRead_ = read(0, signatureBytes_, sizeof(signatureBytes_));
+  if (!signatureRead_) {
     return false;
   }
-  return memcmp(data, kSignature, sizeof(kSignature)) == 0;
+  return memcmp(signatureBytes_, kSignature, sizeof(kSignature)) == 0;
 }
 
 bool ScreenFontFlash::read(uint32_t address, uint8_t* buffer, size_t length) {
@@ -115,7 +130,7 @@ bool ScreenFontFlash::read(uint32_t address, uint8_t* buffer, size_t length) {
 }
 
 bool ScreenFontFlash::readAscii8x16(uint8_t code, uint8_t* buffer, size_t length) {
-  if (buffer == nullptr || length < kAscii8x16Size || !initialized_) {
+  if (buffer == nullptr || length < kAscii8x16Size || !available_) {
     return false;
   }
 
@@ -125,7 +140,7 @@ bool ScreenFontFlash::readAscii8x16(uint8_t code, uint8_t* buffer, size_t length
 
 bool ScreenFontFlash::readDoubleByte16x16(uint8_t high, uint8_t low, uint8_t* buffer,
                                           size_t length) {
-  if (buffer == nullptr || length < kDoubleByte16x16Size || !initialized_) {
+  if (buffer == nullptr || length < kDoubleByte16x16Size || !available_) {
     return false;
   }
   if (high < config_.doubleByteFirst || low < config_.doubleByteFirst ||

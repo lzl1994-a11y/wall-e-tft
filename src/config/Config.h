@@ -192,7 +192,7 @@ constexpr uint32_t keyeTftSpiHz = 40000000;
 
 /// 中文：屏幕字库 Flash SPI 频率，单位 Hz；较低频率通常更稳定。
 /// English: SPI frequency for the screen font flash, in Hz; a lower value improves stability.
-constexpr uint32_t kScreenFontSpiHz = 2000000;
+constexpr uint32_t kScreenFontSpiHz = 1000000;
 
 /// 中文：8x16 单字节字模在屏幕字库 Flash 中的起始地址。
 /// English: Start address of 8x16 single-byte glyphs in the screen font flash.

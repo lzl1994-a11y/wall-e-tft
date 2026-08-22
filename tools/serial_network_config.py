@@ -82,28 +82,33 @@ def _request_identity(command: str) -> tuple[int, str]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("port")
-    parser.add_argument("command")
+    parser.add_argument(
+        "commands", nargs="+",
+        help="one or more NETCFG commands; SET and APPLY stay on the same serial connection",
+    )
     parser.add_argument("--timeout", type=float, default=65.0)
     args = parser.parse_args()
-    sequence, operation = _request_identity(args.command)
     try: import serial
     except ImportError as exc: raise SystemExit("pip install pyserial is required") from exc
     with serial.Serial(args.port, 115200, timeout=0.5) as device:
-        device.write((args.command + "\r\n").encode("ascii"))
-        deadline = time.monotonic() + max(0.1, args.timeout)
-        while time.monotonic() < deadline:
-            raw = device.readline().decode("utf-8", "replace")
-            if not raw.startswith("NETCFG:"):
-                continue
-            response = decode_line(raw)
-            if response.sequence != sequence:
-                continue
-            print(response)
-            if isinstance(response, Status):
-                return
-            if response.operation != operation:
-                continue
-            if operation != "APPLY" or response.result != RESULT_ACCEPTED:
-                return
-        raise SystemExit("timed out waiting for NETCFG response")
+        for command in args.commands:
+            sequence, operation = _request_identity(command)
+            device.write((command + "\r\n").encode("ascii"))
+            deadline = time.monotonic() + max(0.1, args.timeout)
+            while time.monotonic() < deadline:
+                raw = device.readline().decode("utf-8", "replace")
+                if not raw.startswith("NETCFG:"):
+                    continue
+                response = decode_line(raw)
+                if response.sequence != sequence:
+                    continue
+                print(response)
+                if isinstance(response, Status):
+                    break
+                if response.operation != operation:
+                    continue
+                if operation != "APPLY" or response.result != RESULT_ACCEPTED:
+                    break
+            else:
+                raise SystemExit("timed out waiting for NETCFG response")
 if __name__ == "__main__": main()

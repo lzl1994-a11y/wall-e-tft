@@ -45,6 +45,17 @@ void TextRenderer::drawBytes(int x, int y, const uint8_t* data, size_t len,
       prepareBus();
       if (!fontProvider_->readDoubleByte16x16(b, data[i + 1], bitmap, sizeof(bitmap))) {
         memset(bitmap, 0, sizeof(bitmap));
+        const int glyphWidth = min(config_.doubleByteWidth, 16);
+        const int glyphHeight = min(config_.lineHeight, 16);
+        const int rowBytes = (glyphWidth + 7) / 8;
+        for (int row = 0; row < glyphHeight; ++row) {
+          for (int col = 0; col < glyphWidth; ++col) {
+            if (row == 0 || row == glyphHeight - 1 || col == 0 ||
+                col == glyphWidth - 1) {
+              bitmap[row * rowBytes + (col >> 3)] |= 0x80 >> (col & 7);
+            }
+          }
+        }
       }
       drawGlyph(cursorX, cursorY, config_.doubleByteWidth, config_.lineHeight, bitmap, color,
                 bg);
@@ -103,15 +114,24 @@ void TextRenderer::drawGlyph(int x, int y, int w, int h, const uint8_t* bitmap,
   }
 
   const int rowBytes = (w + 7) / 8;
-  uint16_t pixels[16 * 16] = {0};
+  // The ESP32 SPI-DMA display path is reliable for full-screen frames, but
+  // small stack-backed RGB bitmap buffers can be lost between bus operations.
+  // Draw each set-bit run directly so font glyphs never depend on that buffer.
+  gfx_->fillRect(x, y, w, h, bg);
   for (int row = 0; row < h; ++row) {
+    int runStart = -1;
     for (int col = 0; col < w; ++col) {
       const bool dot = bitmap[row * rowBytes + (col >> 3)] & (0x80 >> (col & 7));
-      pixels[row * w + col] = dot ? color : bg;
+      if (dot && runStart < 0) {
+        runStart = col;
+      }
+      if ((!dot || col == w - 1) && runStart >= 0) {
+        const int end = dot && col == w - 1 ? col + 1 : col;
+        gfx_->drawFastHLine(x + runStart, y + row, end - runStart, color);
+        runStart = -1;
+      }
     }
   }
-  prepareBus();
-  gfx_->draw16bitRGBBitmap(x, y, pixels, w, h);
 }
 
 bool TextRenderer::isDoubleByteGlyph(const uint8_t* data, size_t len, size_t index) const {

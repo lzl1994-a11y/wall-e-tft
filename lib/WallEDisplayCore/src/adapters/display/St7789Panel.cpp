@@ -2,10 +2,46 @@
 
 namespace WallE {
 
+namespace {
+
+int16_t dmaXOffset(const St7789Panel::Config& config) {
+  switch (config.rotation) {
+    case 1:
+    case 7:
+      return config.rowOffset1;
+    case 2:
+    case 6:
+      return config.colOffset2;
+    case 3:
+    case 5:
+      return config.rowOffset2;
+    default:
+      return config.colOffset1;
+  }
+}
+
+int16_t dmaYOffset(const St7789Panel::Config& config) {
+  switch (config.rotation) {
+    case 1:
+    case 7:
+      return config.colOffset2;
+    case 2:
+    case 6:
+      return config.rowOffset2;
+    case 3:
+    case 5:
+      return config.colOffset1;
+    default:
+      return config.rowOffset1;
+  }
+}
+
+}  // namespace
+
 St7789Panel::St7789Panel(const Config& config)
     : config_(config),
       asyncWriter_(config.dcPin, config.csPin, config.spiHost,
-                   config.spiHz) {}
+                   config.spiHz, dmaXOffset(config), dmaYOffset(config)) {}
 
 St7789Panel::~St7789Panel() {
   asyncWriter_.end();

@@ -12,6 +12,18 @@ namespace WallE {
  */
 class ScreenFontFlash : public IBitmapFontProvider {
  public:
+  static constexpr size_t kSignatureLength = 22;
+
+  enum class InitStatus : uint8_t {
+    NotStarted,
+    InvalidConfig,
+    AddDeviceFailed,
+    WakeFailed,
+    SignatureReadFailed,
+    SignatureMismatch,
+    Ready,
+  };
+
   /**
    * 中文：字库 Flash 的硬件连接与字模布局配置。
    * English: Hardware wiring and glyph layout configuration for the font flash.
@@ -72,8 +84,8 @@ class ScreenFontFlash : public IBitmapFontProvider {
    * 中文：初始化字库 Flash 的 CS、SPI，并发送唤醒命令。
    * English: Initializes the font flash CS/SPI and sends the wake command.
    *
-   * @return 中文：初始化成功返回 true；配置缺失返回 false。
-   *         English: true on successful initialization; false when required config is missing.
+   * @return 中文：硬件初始化且字库签名匹配时返回 true；否则返回 false。
+   *         English: true only when hardware initialization and font-signature verification succeed.
    */
   bool begin() override;
 
@@ -85,6 +97,18 @@ class ScreenFontFlash : public IBitmapFontProvider {
    *         English: true when the font is usable; false otherwise.
    */
   bool available() const override { return available_; }
+
+  /// 中文：返回最近一次初始化停留的阶段，供上层输出硬件诊断信息。
+  /// English: Returns the last initialization stage for hardware diagnostics.
+  InitStatus initStatus() const { return initStatus_; }
+
+  /// 中文：是否成功读取过完整的 22 字节字库签名。
+  /// English: Whether the complete 22-byte font signature was read successfully.
+  bool signatureRead() const { return signatureRead_; }
+
+  /// 中文：返回最近读取的原始签名字节，长度固定为 kSignatureLength。
+  /// English: Returns the most recently read raw signature bytes.
+  const uint8_t* signatureBytes() const { return signatureBytes_; }
 
   /**
    * 中文：读取一个 8x16 单字节字模。
@@ -167,6 +191,15 @@ class ScreenFontFlash : public IBitmapFontProvider {
   /// 中文：签名校验后的可用状态。
   /// English: Availability after signature verification.
   bool available_ = false;
+
+  /// 中文：最近一次初始化的精确结果。
+  /// English: Precise result of the most recent initialization attempt.
+  InitStatus initStatus_ = InitStatus::NotStarted;
+
+  /// 中文：签名读取是否完成，以及读取到的原始字节。
+  /// English: Signature-read completion flag and captured raw bytes.
+  bool signatureRead_ = false;
+  uint8_t signatureBytes_[kSignatureLength] = {0};
 
   /// 中文：由 ESP-IDF SPI Master 驱动管理的字库设备句柄。
   /// English: Font-device handle managed by the ESP-IDF SPI master driver.
