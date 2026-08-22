@@ -420,7 +420,7 @@ Host / 上位机 (RDK X3)           ESP32-S3
      │  getname:WHO_ARE_YOU          │
      │──────────────────────────────▶│
      │                              │  (case-insensitive prefix match)
-     │         WALL_E_TFT            │  (大小写不敏感前缀匹配)
+     │       IAM:WALL_E_TFT          │  (大小写不敏感前缀匹配)
      │◀──────────────────────────────│
      │                              │
      │  Handshake complete.          │
@@ -434,13 +434,14 @@ Host / 上位机 (RDK X3)           ESP32-S3
 | # | Command / 命令 | Direction / 方向 | Description / 说明 | Example / 示例 |
 |---|---------|-----------|-------------|---------|
 | 1 | `getname:WHO_ARE_YOU` | Host → ESP32 | Device discovery / 设备发现 | — |
-| 2 | `WALL_E_TFT` | ESP32 → Host | Handshake response / 握手应答 | — |
+| 2 | `IAM:WALL_E_TFT` | ESP32 → Host | Handshake response / 握手应答 | — |
 | 3 | `power:N` | Host → ESP32 | Update battery 0–100 / 更新电量 | `power:78` |
 | 4 | `openchat:1` | Host → ESP32 | Enter chat screen / 进入聊天 | — |
 | 5 | `openchat:0` | Host → ESP32 | Exit chat screen / 退出聊天 | — |
 | 6 | `you:<text>` | Host → ESP32 | User message (GBK) / 用户消息 | `you:你好` |
 | 7 | `ai:<text>` | Host → ESP32 | AI response / AI 回复 | `ai:今天天气不错` |
 | 8 | `eyeaction:zoom` | Host → ESP32 | Trigger eye zoom animation / 触发变焦动画 | — |
+| 9 | `pca9685:v0,...,v14` | Host → ESP32 | Set 15 PCA9685 channels / 设置15路PWM | `pca9685:3000,6500,...,0` |
 
 ### Protocol Notes / 协议说明
 
@@ -449,6 +450,7 @@ Host / 上位机 (RDK X3)           ESP32-S3
 - 无前缀的消息默认按 `you:`（用户角色）处理 / Unprefixed messages default to `you:` role.
 - 数字参数独立解析，支持前导空格和制表符 / Numeric params parsed independently, leading whitespace tolerated.
 - 中文由上位机编码为 GBK/GB2312 字节流发送，固件不做 UTF-8 转换 / Chinese text is GBK/GB2312-encoded by the host; firmware does no UTF-8 conversion.
+- 除设备发现外，串口命令不返回应用层 ACK；上位机应限速发送 / Commands other than discovery have no application-level ACK; the host should pace writes.
 
 ### Current Limitations / 当前局限
 
