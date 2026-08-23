@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <string.h>
 
 namespace WallE {
 
@@ -14,21 +15,35 @@ inline SemaphoreHandle_t serialOutputMutex() {
   return mutex;
 }
 
-inline void serialPrintln(const char* text) {
+inline void serialWriteLine(const char* text, size_t length) {
+  constexpr size_t kMaxLineBytes = 512;
+  if (text == nullptr) {
+    text = "";
+    length = 0;
+  }
+  length = min(length, kMaxLineBytes);
+  char line[kMaxLineBytes + 2] = {};
+  if (length > 0) memcpy(line, text, length);
+  line[length] = '\r';
+  line[length + 1] = '\n';
   SemaphoreHandle_t mutex = serialOutputMutex();
   if (mutex != nullptr) xSemaphoreTake(mutex, portMAX_DELAY);
-  Serial.println(text == nullptr ? "" : text);
+  Serial.write(reinterpret_cast<const uint8_t*>(line), length + 2);
   if (mutex != nullptr) xSemaphoreGive(mutex);
 }
 
+inline void serialPrintln(const char* text) {
+  serialWriteLine(text, strnlen(text == nullptr ? "" : text, 512));
+}
+
 inline void serialLogLine(const char* level, const char* message) {
-  SemaphoreHandle_t mutex = serialOutputMutex();
-  if (mutex != nullptr) xSemaphoreTake(mutex, portMAX_DELAY);
-  Serial.print('[');
-  Serial.print(level == nullptr ? "" : level);
-  Serial.print("] ");
-  Serial.println(message == nullptr ? "" : message);
-  if (mutex != nullptr) xSemaphoreGive(mutex);
+  char line[512] = {};
+  const int written = snprintf(line, sizeof(line), "[%s] %s",
+                               level == nullptr ? "" : level,
+                               message == nullptr ? "" : message);
+  const size_t length = written <= 0 ? 0 : min(
+      static_cast<size_t>(written), sizeof(line) - 1);
+  serialWriteLine(line, length);
 }
 
 }  // namespace WallE
