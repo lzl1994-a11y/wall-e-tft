@@ -691,6 +691,8 @@ void AppController::controlTaskEntry(void* parameter) {
 void AppController::runControlTask() {
   for (;;) {
     bool handledPacket = false;
+    bool pca9685Pending = false;
+    int32_t latestPca9685Values[15] = {0};
     char networkResponse[512] = {0};
     while (networkConfig_.pollSerialResponse(networkResponse,
                                              sizeof(networkResponse))) {
@@ -703,6 +705,16 @@ void AppController::runControlTask() {
         break;
       }
       handledPacket = true;
+      // PCA9685 packets describe a complete hardware state. If several have
+      // accumulated in USB Serial, only the newest state in this batch should
+      // reach the servos; replaying stale states creates a catch-up burst.
+      if (startsWithIgnoreCase(packet.data, packet.length, "pca9685:")) {
+        if (parsePca9685(packet, latestPca9685Values)) {
+          pca9685Rx_ = true;
+          pca9685Pending = true;
+        }
+        continue;
+      }
       bool applyAccepted = false;
       if (networkConfig_.handleSerialCommand(packet.data, packet.length,
                                              networkResponse,
@@ -713,6 +725,10 @@ void AppController::runControlTask() {
       } else if (!handleControlPacket(packet)) {
         enqueueUiPacket(packet);
       }
+    }
+
+    if (pca9685Pending) {
+      pca9685_.setChannels(latestPca9685Values, 15);
     }
 
     applyPca9685DefaultsIfNeeded();
