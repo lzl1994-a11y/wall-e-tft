@@ -138,6 +138,7 @@ class AppController {
   uint32_t cameraHoldDurationMs_ = WallEConfig::kCameraHoldDurationMs;
   uint32_t cameraFramesDisplayed_ = 0;
   bool cameraHasFrame_ = false;
+  bool cameraStreamPersistent_ = false;
   
   bool pca9685Rx_ = false;
   uint32_t bootMs_ = 0;

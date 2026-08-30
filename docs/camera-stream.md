@@ -56,6 +56,9 @@ hand-writing credential-bearing commands.
 
 Every TCP message is `WTFT`, version 1, type, zero flags, u32 sequence, and
 u32 payload length in network byte order. `STREAM_START` payload is
-`duration_ms:u32, hold_ms:u32, fps:u16, reserved:u16`; JPEGs must be baseline,
+`duration_ms:u32, hold_ms:u32, fps:u16, reserved:u16`. A `duration_ms` value of
+`0xFFFFFFFF` selects a persistent stream that remains active until
+`STREAM_END`, disconnect, or the frame-idle timeout. Other duration values keep
+the bounded camera-preview behavior. JPEGs must be baseline,
 no larger than 240×240 or 256 KiB. The ESP32 centers frames smaller than the
 square TFT, preserving the camera's original aspect ratio with black bars.

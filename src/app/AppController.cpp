@@ -489,7 +489,10 @@ void AppController::beginCameraStream(const ImageStreamEvent& event) {
   cameraHoldStartedMs_ = 0;
   cameraFramesDisplayed_ = 0;
   cameraHasFrame_ = false;
-  cameraStreamDurationMs_ = event.streamDurationMs > 0
+  cameraStreamPersistent_ = event.streamDurationMs == UINT32_MAX;
+  cameraStreamDurationMs_ = cameraStreamPersistent_
+                                ? 0
+                                : event.streamDurationMs > 0
                                 ? min(event.streamDurationMs,
                                       static_cast<uint32_t>(10000))
                                 : WallEConfig::kCameraStreamDurationMs;
@@ -535,8 +538,9 @@ void AppController::updateCameraState() {
   const uint32_t now = millis();
   if (screenMode_ == ScreenMode::CameraStreaming) {
     const bool streamDeadlineReached =
+        !cameraStreamPersistent_ &&
         now - cameraStreamStartedMs_ >=
-        cameraStreamDurationMs_ + WallEConfig::kCameraStreamGraceMs;
+            cameraStreamDurationMs_ + WallEConfig::kCameraStreamGraceMs;
     const bool frameStreamStalled =
         cameraHasFrame_ &&
         now - cameraLastFrameMs_ >= WallEConfig::kCameraFrameIdleTimeoutMs;
@@ -562,6 +566,7 @@ void AppController::restoreScreenAfterCamera() {
   }
   cameraHasFrame_ = false;
   cameraFramesDisplayed_ = 0;
+  cameraStreamPersistent_ = false;
   logger_.info("camera preview complete");
 }
 
