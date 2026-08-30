@@ -680,7 +680,7 @@ void AppController::applyPca9685DefaultsIfNeeded() {
   pca9685Rx_ = true;
   logger_.info("pca9685: 5s timeout, applying default neutral/stop");
   const int32_t defaults[15] = {
-      3000, 6500, 1920, 8000, 5000, 5000, 4000, 2000, 8000,
+      3000, 6500, 1920, 8000, 5000, 5000, 2000, 2000, 8000,
       0, 0, 0, 0, 0, 0};
   pca9685_.setChannels(defaults, 15);
 }
