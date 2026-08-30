@@ -542,7 +542,7 @@ void AppController::updateCameraState() {
         now - cameraStreamStartedMs_ >=
             cameraStreamDurationMs_ + WallEConfig::kCameraStreamGraceMs;
     const bool frameStreamStalled =
-        cameraHasFrame_ &&
+        !cameraStreamPersistent_ && cameraHasFrame_ &&
         now - cameraLastFrameMs_ >= WallEConfig::kCameraFrameIdleTimeoutMs;
     if (streamDeadlineReached || frameStreamStalled) {
       beginCameraHold();
