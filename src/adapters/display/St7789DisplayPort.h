@@ -52,6 +52,8 @@ class St7789DisplayPort : public IDisplayPort {
   void showStatus(AppState state) override;
   void showPower(uint8_t percent) override;
   void updatePower(uint8_t percent) override;
+  void showNetworkFailure() override;
+  void showNetworkHost(const char* host, uint16_t port) override;
 
   /**
    * 中文：根据会话缓存重绘聊天区域，只显示能放进会话区域的最新消息。
@@ -88,6 +90,7 @@ class St7789DisplayPort : public IDisplayPort {
   void drawPowerBars(uint8_t percent, bool force);
   void drawPowerThinBar(int index, bool active);
   void drawSunIcon(int centerX, int centerY);
+  void drawNetworkFooter();
   int activeThinBars(uint8_t percent) const;
 
   /**
@@ -185,6 +188,8 @@ class St7789DisplayPort : public IDisplayPort {
   /// 中文：当前文字渲染资源是否可用。
   /// English: Whether the selected text rendering resource is usable.
   bool fontOk_ = false;
+  char networkFooter_[48] = {0};
+  uint16_t networkFooterColor_ = 0xFFFF;
 
   /// 中文：固定 UI 框架是否已经绘制，避免每次消息都全屏重画。
   /// English: Whether the fixed UI frame has been drawn to avoid full-screen redraw on every message.

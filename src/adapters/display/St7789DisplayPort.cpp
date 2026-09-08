@@ -80,6 +80,7 @@ constexpr int kPowerThinTopY = 70;
 constexpr int kPowerThinCount = 7;
 constexpr int kPowerThickY = 194;
 constexpr int kPowerThickH = 24;
+constexpr int kNetworkFooterY = 222;
 
 const char* fontInitStatusText(ScreenFontFlash::InitStatus status) {
   switch (status) {
@@ -295,6 +296,27 @@ void St7789DisplayPort::updatePower(uint8_t percent) {
   deselectSharedSpiDevices();
 }
 
+void St7789DisplayPort::showNetworkFailure() {
+  if (fontOk_) {
+    // The screen font consumes GBK/GB2312 bytes; this spells "ESP网络配置失败".
+    static constexpr char kFailureGbk[] =
+        "ESP" "\xCD\xF8\xC2\xE7\xC5\xE4\xD6\xC3\xCA\xA7\xB0\xDC";
+    memcpy(networkFooter_, kFailureGbk, sizeof(kFailureGbk));
+  } else {
+    snprintf(networkFooter_, sizeof(networkFooter_), "ESP NET CONFIG FAILED");
+  }
+  networkFooterColor_ = kRed;
+  if (powerFrameDrawn_) drawNetworkFooter();
+}
+
+void St7789DisplayPort::showNetworkHost(const char* host, uint16_t port) {
+  (void)port;
+  snprintf(networkFooter_, sizeof(networkFooter_), "HOST %.24s",
+           host == nullptr ? "" : host);
+  networkFooterColor_ = kGreen;
+  if (powerFrameDrawn_) drawNetworkFooter();
+}
+
 void St7789DisplayPort::drawPowerFrame() {
   gfx_->fillScreen(kBlack);
   gfx_->setTextColor(kYellow);
@@ -302,6 +324,7 @@ void St7789DisplayPort::drawPowerFrame() {
   gfx_->setCursor(14, 26);
   gfx_->print("SOLAR CHARGE LEVEL");
   drawSunIcon(53, 86);
+  drawNetworkFooter();
   frameDrawn_ = false;
   powerFrameDrawn_ = true;
   lastPowerThinBars_ = -1;
@@ -430,6 +453,19 @@ void St7789DisplayPort::render(const ChatSession& session) {
     drawMessage(session.at(i), y);
   }
   deselectSharedSpiDevices();
+}
+
+void St7789DisplayPort::drawNetworkFooter() {
+  if (gfx_ == nullptr) return;
+  deselectSharedSpiDevices();
+  gfx_->fillRect(0, 220, WallEConfig::kScreenWidth, 20, kBlack);
+  if (networkFooter_[0] == '\0') return;
+  int nextY = kNetworkFooterY;
+  textRenderer_.drawBytes(4, kNetworkFooterY,
+                          reinterpret_cast<const uint8_t*>(networkFooter_),
+                          strlen(networkFooter_), networkFooterColor_, kBlack,
+                          WallEConfig::kScreenWidth - 8,
+                          WallEConfig::kScreenHeight, nextY);
 }
 
 void St7789DisplayPort::showCameraWaiting() {

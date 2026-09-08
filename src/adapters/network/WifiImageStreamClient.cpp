@@ -13,6 +13,8 @@ constexpr TickType_t kFrameEventQueueWait = pdMS_TO_TICKS(20);
 constexpr TickType_t kFrameSlotWait = pdMS_TO_TICKS(250);
 constexpr uint32_t kNetworkTrialDelayMs = 500;
 constexpr uint32_t kNetworkTrialTimeoutMs = 60000;
+constexpr uint8_t kWifiTimeoutDetail = 9;
+constexpr uint8_t kTcpOrHelloTimeoutDetail = 10;
 
 enum class ConfigValidationDetail : uint8_t {
   None = 0,
@@ -89,7 +91,7 @@ bool decodeBase64Url(const uint8_t* source, size_t sourceLength, char* destinati
       bits -= 8;
       if (written + 1 >= capacity) return false;
       const uint8_t decoded = static_cast<uint8_t>((accumulator >> bits) & 0xFF);
-      // NETCFG v1 carries UTF-8 text and forbids every control character.
+      // NETCFG v2 carries UTF-8 text and forbids every control character.
       // Reject NUL here as well, otherwise later C-string validation would
       // silently ignore bytes after an embedded terminator.
       if (decoded < 0x20 || decoded == 0x7F) return false;
@@ -129,13 +131,10 @@ bool WifiImageStreamClient::begin() {
   if (taskHandle_ != nullptr) {
     return true;
   }
-  const NetworkConfigStore::LoadResult load =
-      networkConfigStore_.load(config_.defaultNetworkConfig);
-  if (load == NetworkConfigStore::LoadResult::Error) {
-    return false;
-  }
-  activeNetworkConfig_ = networkConfigStore_.active();
-  activeFromNvs_ = networkConfigStore_.activeFromNvs();
+  // NETCFG v2 is session-only. Every boot starts unconfigured and waits for
+  // the host to provide credentials over USB serial.
+  activeNetworkConfig_ = NetworkConfigData{};
+  candidateNetworkConfig_ = NetworkConfigData{};
   if (config_.maxJpegBytes == 0 || !psramFound()) {
     return false;
   }
@@ -172,7 +171,6 @@ bool WifiImageStreamClient::begin() {
   // We deliberately own reconnects so failed credentials rotate instead of
   // repeatedly retrying only the last access point.
   WiFi.setAutoReconnect(false);
-  if (hasConfiguredNetwork()) startNextWifiConnection();
 
   const BaseType_t created = xTaskCreatePinnedToCore(
       taskEntry, "walle_image_net", config_.taskStackBytes, this,
@@ -272,6 +270,9 @@ void WifiImageStreamClient::serviceWifi() {
     }
     return;
   }
+  portENTER_CRITICAL(&networkConfigMux_);
+  if (trialInProgress_) trialSawWifi_ = true;
+  portEXIT_CRITICAL(&networkConfigMux_);
   serviceTcp();
 }
 
@@ -287,7 +288,13 @@ bool WifiImageStreamClient::serviceTrial(uint32_t now) {
     return true;
   }
   if (expired) {
-    finishTrialFailure();
+    bool sawWifi = false;
+    portENTER_CRITICAL(&networkConfigMux_);
+    sawWifi = trialSawWifi_;
+    portEXIT_CRITICAL(&networkConfigMux_);
+    finishTrialFailure(ConfigResult::TrialFailed,
+                       sawWifi ? kTcpOrHelloTimeoutDetail
+                               : kWifiTimeoutDetail);
     return true;
   }
   return false;
@@ -555,7 +562,8 @@ void WifiImageStreamClient::queueSerialResult(uint32_t sequence,
                                               uint8_t detail) {
   if (serialResponseQueue_ == nullptr) return;
   const SerialResult item = {sequence, static_cast<uint8_t>(result), detail};
-  xQueueSend(serialResponseQueue_, &item, 0);
+  // Terminal provisioning results must survive concurrent host queries.
+  xQueueSend(serialResponseQueue_, &item, portMAX_DELAY);
 }
 
 void WifiImageStreamClient::startTrial() {
@@ -568,6 +576,7 @@ void WifiImageStreamClient::startTrial() {
     return;
   }
   trialInProgress_ = true;
+  trialSawWifi_ = false;
   trialDeadlineMs_ = millis() + kNetworkTrialTimeoutMs;
   nextWifiNetworkIndex_ = 0;
   selectedWifiNetworkIndex_ = 0xFF;
@@ -588,22 +597,25 @@ void WifiImageStreamClient::finishTrialSuccess() {
   portENTER_CRITICAL(&networkConfigMux_);
   candidate = candidateNetworkConfig_;
   portEXIT_CRITICAL(&networkConfigMux_);
-  if (!networkConfigStore_.saveActive(candidate)) {
-    finishTrialFailure(ConfigResult::StoreError);
-    return;
-  }
   portENTER_CRITICAL(&networkConfigMux_);
-  activeNetworkConfig_ = networkConfigStore_.active();
-  activeFromNvs_ = true;
+  activeNetworkConfig_ = candidate;
   trialInProgress_ = false;
   trialDeadlineMs_ = 0;
+  trialSawWifi_ = false;
   candidatePresent_ = false;
   const uint32_t sequence = trialSequence_;
   portEXIT_CRITICAL(&networkConfigMux_);
-  queueSerialResult(sequence, ConfigResult::TrialConnectedSaved);
+  ImageStreamEvent event;
+  event.type = ImageStreamEventType::NetworkConfigConnected;
+  strncpy(event.host, candidate.host, sizeof(event.host) - 1);
+  event.host[sizeof(event.host) - 1] = '\0';
+  event.port = candidate.port;
+  queueSerialResult(sequence, ConfigResult::TrialConnected);
+  queueEvent(event, portMAX_DELAY);
 }
 
-void WifiImageStreamClient::finishTrialFailure(ConfigResult result) {
+void WifiImageStreamClient::finishTrialFailure(ConfigResult result,
+                                                uint8_t detail) {
   portENTER_CRITICAL(&networkConfigMux_);
   if (!trialInProgress_ && !trialPending_) {
     portEXIT_CRITICAL(&networkConfigMux_);
@@ -613,6 +625,7 @@ void WifiImageStreamClient::finishTrialFailure(ConfigResult result) {
   trialInProgress_ = false;
   trialStartAtMs_ = 0;
   trialDeadlineMs_ = 0;
+  trialSawWifi_ = false;
   nextWifiNetworkIndex_ = 0;
   selectedWifiNetworkIndex_ = 0xFF;
   const uint32_t sequence = trialSequence_;
@@ -622,7 +635,10 @@ void WifiImageStreamClient::finishTrialFailure(ConfigResult result) {
   updateConnected(false);
   WiFi.disconnect(false, false);
   lastWifiAttemptMs_ = millis() - config_.wifiReconnectMs;
-  queueSerialResult(sequence, result);
+  ImageStreamEvent event;
+  event.type = ImageStreamEventType::NetworkConfigFailed;
+  queueSerialResult(sequence, result, detail);
+  queueEvent(event, portMAX_DELAY);
 }
 
 bool WifiImageStreamClient::handleSerialCommand(const uint8_t* data,
@@ -671,7 +687,7 @@ bool WifiImageStreamClient::handleSerialCommand(const uint8_t* data,
                static_cast<uint8_t>(ConfigValidationDetail::WifiCount));
     return true;
   }
-  if (fieldLengths[1] != 1 || fields[1][0] != '1') {
+  if (fieldLengths[1] != 1 || fields[1][0] != '2') {
     resultLine(ConfigResult::ValidationError,
                static_cast<uint8_t>(ConfigValidationDetail::Version));
     return true;
@@ -679,11 +695,10 @@ bool WifiImageStreamClient::handleSerialCommand(const uint8_t* data,
 
   if (operation == 2) {
     NetworkConfigData active;
-    bool activeFromNvs = false, candidate = false, busy = false;
+    bool candidate = false, busy = false;
     uint8_t selected = 0xFF;
     portENTER_CRITICAL(&networkConfigMux_);
     active = activeNetworkConfig_;
-    activeFromNvs = activeFromNvs_;
     candidate = candidatePresent_;
     busy = trialPending_ || trialInProgress_;
     selected = selectedWifiNetworkIndex_;
@@ -691,13 +706,13 @@ bool WifiImageStreamClient::handleSerialCommand(const uint8_t* data,
     char encoded[3][48] = {{0}}, host[88] = {0};
     for (size_t index = 0; index < 3; ++index)
       if (encodeBase64Url(active.wifi[index].ssid, encoded[index], sizeof(encoded[index])) == 0 && active.wifi[index].ssid[0] != '\0') {
-        resultLine(ConfigResult::StoreError, static_cast<uint8_t>(ConfigValidationDetail::Length)); return true;
+        resultLine(ConfigResult::ValidationError, static_cast<uint8_t>(ConfigValidationDetail::Length)); return true;
       }
     if (encodeBase64Url(active.host, host, sizeof(host)) == 0 && active.host[0] != '\0') {
-      resultLine(ConfigResult::StoreError, static_cast<uint8_t>(ConfigValidationDetail::Length)); return true;
+      resultLine(ConfigResult::ValidationError, static_cast<uint8_t>(ConfigValidationDetail::Length)); return true;
     }
-    const uint8_t flags = (activeFromNvs ? 1 : 0) | (candidate ? 2 : 0) | (busy ? 4 : 0);
-    snprintf(response, capacity, "NETCFG:STATUS:%lu|1|%u|%u|%s|%s|%s|%s|%u",
+    const uint8_t flags = (candidate ? 2 : 0) | (busy ? 4 : 0);
+    snprintf(response, capacity, "NETCFG:STATUS:%lu|2|%u|%u|%s|%s|%s|%s|%u",
              static_cast<unsigned long>(sequence), static_cast<unsigned>(flags),
              static_cast<unsigned>(selected), encoded[0], encoded[1], encoded[2], host,
              static_cast<unsigned>(active.port));

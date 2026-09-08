@@ -11,7 +11,7 @@ seconds at 10 FPS then keeps the final frame for three seconds; the normal
 screen is restored afterward. A candidate switch stops image delivery while
 Wi-Fi/TCP reconnects.
 
-## Serial NETCFG v1
+## Serial NETCFG v2
 
 USB serial is the sole configuration and recovery channel, including on first
 boot without valid Wi-Fi, bad credentials, or an unreachable TCP server. Lines
@@ -20,29 +20,32 @@ Base64url fields are UTF-8 bytes, URL-safe, and unpadded. Passwords are never
 logged or returned.
 
 ```
-netcfg:set:<seq>|1|<ssid1>|<pass1>|<ssid2>|<pass2>|<ssid3>|<pass3>|<host>|<port>
-netcfg:apply:<seq>|1
-netcfg:query:<seq>|1
+netcfg:set:<seq>|2|<ssid1>|<pass1>|<ssid2>|<pass2>|<ssid3>|<pass3>|<host>|<port>
+netcfg:apply:<seq>|2
+netcfg:query:<seq>|2
 ```
 
 Empty strings are empty fields. SSIDs are 0..32 bytes, passwords 0..64 bytes,
 host is 1..64 bytes, port is 1..65535, and at least one SSID is required.
-`SET` responds `NETCFG:RESULT:<seq>|SET|0|0` and stages RAM only. `APPLY`
+Every boot starts without network configuration. The firmware neither reads nor
+writes network data in NVS and never connects before host provisioning. `SET`
+responds `NETCFG:RESULT:<seq>|SET|0|0` and stages RAM only. `APPLY`
 responds `...|APPLY|1|0` completely before its 500 ms grace period. It then
 tries for at most 60 seconds. After Wi-Fi association, TCP connect, and a
-complete HELLO write, the candidate is saved to NVS and serial emits result 2.
-NVS write failure is result 5; a failed trial rolls back to the old active
+complete HELLO write, the candidate becomes the active RAM configuration and
+serial emits result 2. A failed trial rolls back to the prior in-session active
 configuration and emits result 6. With no old active configuration it remains
-in serial-configurable waiting state. Result 1 is not terminal.
+in serial-configurable waiting state. Detail 9 means Wi-Fi timeout and detail 10
+means TCP/HELLO timeout. Result 5 is reserved. Result 1 is not terminal.
 
 `QUERY` returns:
 
 ```
-NETCFG:STATUS:<seq>|1|<flags>|<selected>|<ssid1>|<ssid2>|<ssid3>|<host>|<port>
+NETCFG:STATUS:<seq>|2|<flags>|<selected>|<ssid1>|<ssid2>|<ssid3>|<host>|<port>
 ```
 
-where flags are NVS active (bit 0), candidate present (bit 1), and
-pending/running (bit 2); selected is 0..2 or 255. A no-config device reports
+where bit 0 is reserved and always zero, bit 1 is candidate present, and bit 2
+is pending/running; selected is 0..2 or 255. A no-config device reports
 empty SSID/host fields and port 0. Error lines are
 `NETCFG:RESULT:<seq>|<SET/APPLY/QUERY>|<result>|<detail>`; details 1..8 are
 version, field count, SSID, password, host, port, length/state, and no Wi-Fi.

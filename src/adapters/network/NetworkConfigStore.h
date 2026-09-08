@@ -7,10 +7,10 @@ namespace WallE {
 
 /**
  * Fixed-size runtime network data. Keeping credentials in bounded buffers
- * makes it possible to validate network packets before touching Wi-Fi/NVS.
+ * makes it possible to validate serial packets before touching Wi-Fi.
  */
 struct NetworkConfigData {
-  static constexpr uint8_t kVersion = 1;
+  static constexpr uint8_t kVersion = 2;
   static constexpr size_t kWifiCount = 3;
   static constexpr size_t kMaxSsidBytes = 32;
   static constexpr size_t kMaxPasswordBytes = 64;
@@ -26,30 +26,8 @@ struct NetworkConfigData {
   char host[kMaxHostBytes + 1] = {0};
   uint16_t port = 0;
 
-  bool setDefaults(const char* ssid1, const char* password1,
-                   const char* ssid2, const char* password2,
-                   const char* ssid3, const char* password3,
-                   const char* imageHost, uint16_t imagePort);
   bool valid() const;
   bool hasWifi() const;
-};
-
-/** Active configuration persistence. Candidates deliberately never enter NVS. */
-class NetworkConfigStore {
- public:
-  enum class LoadResult : uint8_t { Loaded, NoActive, Error };
-
-  // NoActive means Preferences was readable but neither NVS nor defaults had
-  // a usable configuration. It is not a boot failure: serial rescue remains.
-  LoadResult load(const NetworkConfigData& defaults);
-  bool saveActive(const NetworkConfigData& config);
-
-  const NetworkConfigData& active() const { return active_; }
-  bool activeFromNvs() const { return activeFromNvs_; }
-
- private:
-  NetworkConfigData active_;
-  bool activeFromNvs_ = false;
 };
 
 }  // namespace WallE

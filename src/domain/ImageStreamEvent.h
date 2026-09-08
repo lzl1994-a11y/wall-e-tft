@@ -12,6 +12,8 @@ enum class ImageStreamEventType : uint8_t {
   FrameReady,
   StreamEnded,
   ProtocolError,
+  NetworkConfigConnected,
+  NetworkConfigFailed,
 };
 
 /** Event delivered by the background Wi-Fi image-stream client. */
@@ -24,6 +26,8 @@ struct ImageStreamEvent {
   uint32_t holdDurationMs = 0;
   uint16_t targetFps = 0;
   uint8_t frameToken = 0xFF;
+  char host[65] = {0};
+  uint16_t port = 0;
 };
 
 }  // namespace WallE

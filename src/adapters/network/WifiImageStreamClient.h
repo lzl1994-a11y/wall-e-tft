@@ -19,7 +19,6 @@ class WifiImageStreamClient final : public IImageStreamPort,
                                     public INetworkConfigPort {
  public:
   struct Config {
-    NetworkConfigData defaultNetworkConfig;
     const char* deviceId = "WALL_E_TFT";
     size_t maxJpegBytes = 256 * 1024;
     uint32_t wifiReconnectMs = 5000;
@@ -59,11 +58,11 @@ class WifiImageStreamClient final : public IImageStreamPort,
   enum class ConfigResult : uint8_t {
     Staged = 0,
     ApplyAccepted = 1,
-    TrialConnectedSaved = 2,
+    TrialConnected = 2,
     ValidationError = 3,
     NoCandidate = 4,
-    StoreError = 5,
-    TrialFailedRestored = 6,
+    Reserved = 5,
+    TrialFailed = 6,
   };
 
   enum class SlotState : uint8_t {
@@ -109,12 +108,11 @@ class WifiImageStreamClient final : public IImageStreamPort,
   void startTrial();
   void finishTrialSuccess();
   void finishTrialFailure(
-      ConfigResult result = ConfigResult::TrialFailedRestored);
+      ConfigResult result = ConfigResult::TrialFailed,
+      uint8_t detail = 0);
 
   Config config_;
-  NetworkConfigStore networkConfigStore_;
   NetworkConfigData activeNetworkConfig_;
-  bool activeFromNvs_ = false;
   NetworkConfigData candidateNetworkConfig_;
   bool candidatePresent_ = false;
   bool trialPending_ = false;
@@ -122,6 +120,7 @@ class WifiImageStreamClient final : public IImageStreamPort,
   uint32_t trialStartAtMs_ = 0;
   uint32_t trialDeadlineMs_ = 0;
   uint32_t trialSequence_ = 0;
+  bool trialSawWifi_ = false;
   mutable portMUX_TYPE networkConfigMux_ = portMUX_INITIALIZER_UNLOCKED;
   QueueHandle_t serialResponseQueue_ = nullptr;
   WiFiClient client_;

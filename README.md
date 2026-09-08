@@ -648,9 +648,9 @@ copy src\config\Secrets.example.h src\config\Secrets.h
 #define WALLE_IMAGE_SERVER_PORT 9000
 ```
 
-三组网络按 1 → 2 → 3 的顺序轮询；每组等待 `kWifiReconnectMs`（默认5秒）后才切换下一组。SSID 为空的组会被跳过。没有有效 NVS/Secrets 配置时，网络任务仍会运行并等待 USB 串口的晚配置，串口、显示和 PCA9685 不受影响。
+三组网络按 1 → 2 → 3 的顺序轮询；每组等待 `kWifiReconnectMs`（默认5秒）后才切换下一组。SSID 为空的组会被跳过。每次启动时网络任务保持空闲并等待 USB 串口配置，串口、显示和 PCA9685 不受影响。
 
-运行时网络配置**只走 USB 串口**，因此错误 Wi-Fi 或 TCP 不可达时也始终可救援：`netcfg:set:<seq>|1|...` 暂存候选，`netcfg:apply:<seq>|1` 在完整输出 accepted ACK 后 500 ms 切换，最多试运行 60 秒；完成 Wi-Fi、TCP 和 HELLO 后才写 NVS。成功为结果 2，NVS 错误为 5，失败回滚为 6。`netcfg:query` 从不返回密码。WTFT TCP 只传 HELLO/PING/PONG 和 JPEG 预览，绝不含配置 API。完整语法、上位机 codec 与真机检查见 [`docs/camera-stream.md`](docs/camera-stream.md) 和 [`docs/manual-test.md`](docs/manual-test.md)。
+运行时网络配置**只走 USB 串口 NETCFG v2**。ESP32 每次启动都等待上位机下发，不读取或写入 NVS：`netcfg:set:<seq>|2|...` 仅暂存 RAM 候选，`netcfg:apply:<seq>|2` 在完整输出 accepted ACK 后 500 ms 切换，最多试运行 60 秒；完成 Wi-Fi、TCP 和 HELLO 后候选才成为本次会话的 active。成功为结果 2，失败回滚为结果 6（detail 9 是 Wi-Fi 超时，10 是 TCP/HELLO 超时）。失败不影响串口、显示或 PCA9685；待机页显示失败提示，成功时显示当前 HOST。`netcfg:query` 从不返回密码。WTFT TCP 只传 HELLO/PING/PONG 和 JPEG 预览，绝不含配置 API。完整语法、上位机 codec 与真机检查见 [`docs/camera-stream.md`](docs/camera-stream.md) 和 [`docs/manual-test.md`](docs/manual-test.md)。
 
 ---
 
@@ -997,7 +997,7 @@ if __name__ == "__main__":
 - [x] Ports-Adapters layered architecture (DI, core library zero-coupling) / 端口-适配器分层架构
 - [x] SPI chip-select coordinator (SpiBusCoordinator table-driven) / SPI 片选协调器
 - [x] Persistent Wi-Fi/TCP client with PSRAM JPEG slots / Wi-Fi 热备与 JPEG 双缓冲
-- [x] Serial Wi-Fi/signal-server configuration with safe NVS rollback / 串口网络配置与 NVS 回滚
+- [x] Session-only serial Wi-Fi/signal-server configuration / 仅会话 RAM 的串口网络配置
 - [x] 3-second camera preview + 3-second final-frame hold / 三秒预览与末帧保持
 - [x] Background Serial/PCA9685 and image-network tasks / 控制与图像网络后台任务
 - [x] Manual test checklist (6 categories) / 手动测试清单

@@ -51,20 +51,23 @@
 
 ## Serial Network Configuration and Recovery
 
-- Boot once with no valid `Secrets.h` Wi-Fi entries and no NVS config. Verify
-  serial, screens, and PCA9685 remain usable; `netcfg:query:1|1` reports port
-  `0`, then send a Base64url `netcfg:set` and confirm result `SET|0|0`.
-- Send `netcfg:apply:2|1`. Verify serial result `APPLY|1|0` is complete before
+- Reboot after a previously successful connection. Verify no Wi-Fi/TCP attempt
+  occurs before provisioning; serial, screens, and PCA9685 remain usable;
+  `netcfg:query:1|2` reports port `0`, then send a Base64url v2 `netcfg:set` and
+  confirm result `SET|0|0`.
+- Send `netcfg:apply:2|2`. Verify serial result `APPLY|1|0` is complete before
   Wi-Fi/image traffic stops, then within 60 seconds get exactly one terminal
-  `APPLY|2|0`; reboot and confirm NVS persists it.
+  `APPLY|2|0`; QUERY reports the active RAM config. Reboot and confirm QUERY is
+  empty again because v2 never reads or writes NVS.
 - Configure an empty first slot and a valid second slot; QUERY must show the
   three Base64url SSIDs, selected slot, host and port but never a password.
 - Apply deliberately wrong credentials or an unreachable server. Verify the
-  old active connection returns and serial emits terminal `APPLY|6|0`; when
+  old active connection returns and serial emits terminal `APPLY|6|9` for a
+  Wi-Fi timeout or `APPLY|6|10` for a TCP/HELLO timeout; when
   there was no old active config, verify it stays ready for another serial SET.
-- Simulate NVS write failure if practical and verify result `APPLY|5|0` and
-  rollback. Cut power during a trial and verify the prior NVS active config is
-  still used on next boot.
+- Confirm failure leaves the eye display, power screen, serial and PCA9685
+  responsive. The power footer shows `ESP NET CONFIG FAILED`; after success it
+  shows `HOST <address>` and survives chat/camera mode round trips.
 - During a switch, send QUERY and verify busy flag bit 2; SET/APPLY must be
   rejected. Confirm no partial/interleaved NETCFG serial lines under logging.
 - Confirm TCP accepts only image/keepalive messages; its server has no network
@@ -80,7 +83,7 @@
 
 - Network details stay inside `WifiImageStreamClient`; `AppController` depends
   only on `IImageStreamPort` and the abstract `INetworkConfigPort`, never
-  directly on Wi-Fi or Preferences.
+  directly on Wi-Fi.
 - No model client is referenced by firmware.
 - `AppController` does not include display driver headers.
 - Display code does not include network or API configuration.

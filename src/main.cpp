@@ -31,11 +31,6 @@ Pca9685Driver pca9685(WallEConfig::kPca9685Sda, WallEConfig::kPca9685Scl);
 
 WifiImageStreamClient::Config makeImageStreamConfig() {
   WifiImageStreamClient::Config config;
-  config.defaultNetworkConfig.setDefaults(
-      WallEConfig::kWifi1Ssid, WallEConfig::kWifi1Password,
-      WallEConfig::kWifi2Ssid, WallEConfig::kWifi2Password,
-      WallEConfig::kWifi3Ssid, WallEConfig::kWifi3Password,
-      WallEConfig::kImageServerHost, WallEConfig::kImageServerPort);
   config.maxJpegBytes = WallEConfig::kCameraMaxJpegBytes;
   config.wifiReconnectMs = WallEConfig::kWifiReconnectMs;
   config.tcpReconnectMs = WallEConfig::kTcpReconnectMs;

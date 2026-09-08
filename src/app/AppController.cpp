@@ -474,6 +474,14 @@ void AppController::processImageStream() {
     case ImageStreamEventType::ProtocolError:
       logger_.warn("image stream protocol error");
       return;
+    case ImageStreamEventType::NetworkConfigConnected:
+      display_.showNetworkHost(event.host, event.port);
+      logger_.info("ESP network configuration connected");
+      return;
+    case ImageStreamEventType::NetworkConfigFailed:
+      display_.showNetworkFailure();
+      logger_.warn("ESP network configuration failed");
+      return;
   }
 }
 

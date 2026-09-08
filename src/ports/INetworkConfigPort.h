@@ -5,7 +5,7 @@
 
 namespace WallE {
 
-/** Serial-only network configuration boundary. Implementations own Wi-Fi/NVS. */
+/** Serial-only, session-scoped network configuration boundary. */
 class INetworkConfigPort {
  public:
   virtual ~INetworkConfigPort() = default;

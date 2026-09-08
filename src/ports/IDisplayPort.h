@@ -67,6 +67,12 @@ class IDisplayPort {
    */
   virtual void updatePower(uint8_t percent) = 0;
 
+  /** Shows a persistent network failure footer on the power screen. */
+  virtual void showNetworkFailure() = 0;
+
+  /** Shows the active host in the persistent power-screen footer. */
+  virtual void showNetworkHost(const char* host, uint16_t port) = 0;
+
   /**
    * 中文：按当前会话内容重绘主屏聊天区域。
    * English: Redraws the main chat area from the current session.

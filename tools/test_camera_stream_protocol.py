@@ -53,28 +53,31 @@ def test_serial_codec_round_trip() -> None:
     line = netcfg.encode_set(42, config)
     assert len(line.encode("ascii")) <= 512
     assert "秘密" not in line and "秘密" not in repr(config)
-    assert netcfg.encode_apply(7) == "netcfg:apply:7|1"
-    assert netcfg.encode_query(8) == "netcfg:query:8|1"
+    assert "|2|" in line
+    assert netcfg.encode_apply(7) == "netcfg:apply:7|2"
+    assert netcfg.encode_query(8) == "netcfg:query:8|2"
 
     encoded_ssid = netcfg.b64url_encode("机器人", 32, "ssid")
     encoded_host = netcfg.b64url_encode("host", 64, "host")
     status = netcfg.decode_line(
-        f"NETCFG:STATUS:8|1|0|255|{encoded_ssid}|||{encoded_host}|9000"
+        f"NETCFG:STATUS:8|2|0|255|{encoded_ssid}|||{encoded_host}|9000"
     )
     assert status.ssids == ("机器人", "", "")
     assert status.host == "host" and status.port == 9000
     assert "password" not in status.__dict__
 
-    inactive = netcfg.decode_line("NETCFG:STATUS:9|1|0|255|||||0")
+    inactive = netcfg.decode_line("NETCFG:STATUS:9|2|0|255|||||0")
     assert inactive.host == "" and inactive.port == 0
     assert inactive.selected == 255
 
     accepted = netcfg.decode_line("NETCFG:RESULT:9|APPLY|1|0")
     assert not accepted.terminal
-    for result in (2, 5, 6):
+    for result in (2, 6):
         assert netcfg.decode_line(
             f"NETCFG:RESULT:9|APPLY|{result}|0"
         ).terminal
+    assert netcfg.decode_line("NETCFG:RESULT:9|APPLY|6|9").terminal
+    assert netcfg.decode_line("NETCFG:RESULT:9|APPLY|6|10").terminal
 
 
 def test_serial_boundaries_and_rejections() -> None:
@@ -120,7 +123,10 @@ def test_serial_boundaries_and_rejections() -> None:
         lambda: netcfg.decode_line("NETCFG:RESULT:9|APPLY|7|0")
     )
     expect_value_error(
-        lambda: netcfg.decode_line("NETCFG:STATUS:9|1|0|3|||||0")
+        lambda: netcfg.decode_line("NETCFG:STATUS:9|2|0|3|||||0")
+    )
+    expect_value_error(
+        lambda: netcfg.decode_line("NETCFG:STATUS:9|2|1|255|||||0")
     )
 
 
