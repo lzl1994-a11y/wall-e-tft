@@ -610,14 +610,90 @@ void AppController::processUiPacket(const InputPacket& packet) {
     return;
   }
 
+  if (startsWithIgnoreCase(packet.data, packet.length, "eyeconfig:")) {
+    constexpr size_t prefixLength = 10;
+    if (equalsIgnoreCase(packet.data + prefixLength, packet.length - prefixLength, "query")) {
+      const EyeSettings& s = eyeDisplay_.settings();
+      char response[512];
+      snprintf(response, sizeof(response),
+          "EYE:STATE:color=%06lX,ringColor=%06lX,dotColor=%06lX,brightness=%.2f,"
+          "ringBrightness=%.2f,dotBrightness=%.2f,minScale=%.2f,scale=%.2f,maxScale=%.2f,"
+          "glow=%.1f,range=%.2f,x=%.1f,y=%.1f,breathMs=%.0f,blinkMs=%.0f,dots=%d,ring=%d,mood=%s,auto=%d,ready=%d",
+          static_cast<unsigned long>(s.coreColor), static_cast<unsigned long>(s.ringColor),
+          static_cast<unsigned long>(s.dotColor), s.brightness, s.ringBrightness,
+          s.dotBrightness, s.minScale, s.scale, s.maxScale, s.glow, s.range,
+          s.x, s.y, s.breathMs, s.blinkMs, s.dots, s.ring, eyeMoodName(s.mood),
+          s.autoMove, eyeDisplay_.renderOk());
+      serialPrintln(response);
+    } else if (!eyeDisplay_.renderOk()) {
+      serialPrintln("EYE:ERR:not_ready");
+    } else if (eyeDisplay_.configure(packet.data + prefixLength, packet.length - prefixLength)) {
+      serialPrintln("EYE:OK");
+    } else {
+      serialPrintln("EYE:ERR:invalid_config");
+    }
+    return;
+  }
+
   // 中文：eyeActionData/eyeActionLength 保存解析后的眼睛动作名，例如 zoom。
   // English: eyeActionData/eyeActionLength store the parsed eye action name such as zoom.
   const uint8_t* eyeActionData = nullptr;
   size_t eyeActionLength = 0;
   if (parseEyeAction(packet, eyeActionData, eyeActionLength)) {
-    if (equalsIgnoreCase(eyeActionData, eyeActionLength, "zoom")) {
+    if (!eyeDisplay_.renderOk()) {
+      serialPrintln("EYE:ERR:not_ready");
+      return;
+    }
+    if (startsWithIgnoreCase(eyeActionData, eyeActionLength, "look:")) {
+      constexpr size_t lookPrefixLength = 5;
+      const size_t lookLength = eyeActionLength - lookPrefixLength;
+      if (lookLength == 0 || lookLength > 232) {
+        serialPrintln("EYE:ERR:invalid_position");
+        return;
+      }
+      char config[241] = {};
+      const int written = snprintf(config, sizeof(config), "auto=0,%.*s",
+                                   static_cast<int>(lookLength),
+                                   reinterpret_cast<const char*>(eyeActionData + lookPrefixLength));
+      if (written <= 0 || static_cast<size_t>(written) >= sizeof(config) ||
+          !eyeDisplay_.configure(reinterpret_cast<const uint8_t*>(config), written)) {
+        serialPrintln("EYE:ERR:invalid_position");
+      } else {
+        serialPrintln("EYE:OK");
+      }
+    } else if (equalsIgnoreCase(eyeActionData, eyeActionLength, "zoom")) {
       logger_.info("eye action: zoom");
       eyeDisplay_.playZoom();
+      serialPrintln("EYE:OK");
+    } else if (equalsIgnoreCase(eyeActionData, eyeActionLength, "blink")) {
+      eyeDisplay_.blink();
+      serialPrintln("EYE:OK");
+    } else if (startsWithIgnoreCase(eyeActionData, eyeActionLength, "mood:")) {
+      constexpr size_t moodPrefixLength = 5;
+      const size_t moodLength = eyeActionLength - moodPrefixLength;
+      char config[32] = {};
+      const int written = snprintf(config, sizeof(config), "mood=%.*s",
+                                   static_cast<int>(moodLength),
+                                   reinterpret_cast<const char*>(eyeActionData + moodPrefixLength));
+      if (moodLength == 0 || written <= 0 || static_cast<size_t>(written) >= sizeof(config) ||
+          !eyeDisplay_.configure(reinterpret_cast<const uint8_t*>(config), written)) {
+        serialPrintln("EYE:ERR:invalid_mood");
+      } else {
+        serialPrintln("EYE:OK");
+      }
+    } else if (equalsIgnoreCase(eyeActionData, eyeActionLength, "dot") ||
+               equalsIgnoreCase(eyeActionData, eyeActionLength, "flame") ||
+               equalsIgnoreCase(eyeActionData, eyeActionLength, "heart")) {
+      char config[16] = {};
+      const int written = snprintf(config, sizeof(config), "mood=%.*s",
+                                   static_cast<int>(eyeActionLength),
+                                   reinterpret_cast<const char*>(eyeActionData));
+      if (written <= 0 || static_cast<size_t>(written) >= sizeof(config) ||
+          !eyeDisplay_.configure(reinterpret_cast<const uint8_t*>(config), written)) {
+        serialPrintln("EYE:ERR:invalid_mood");
+      } else {
+        serialPrintln("EYE:OK");
+      }
     } else {
       logger_.warn("unknown eye action");
     }

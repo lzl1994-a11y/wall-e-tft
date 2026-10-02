@@ -1,5 +1,7 @@
 #pragma once
 
+#include "domain/EyeRenderer.h"
+
 namespace WallE {
 
 /**
@@ -15,13 +17,18 @@ class IEyeDisplayPort {
   virtual ~IEyeDisplayPort() = default;
 
   /**
-   * 中文：播放 zoom 眼睛动作，目前对应内置 GIF 动画。
-   * English: Plays the zoom eye action, currently backed by the embedded GIF animation.
+   * 中文：触发光核实时缩放动作。
+   * English: Triggers a live light-core zoom action.
    *
    * @param 无 / None.
    * @return 无 / None.
    */
   virtual void playZoom() = 0;
+
+  virtual void blink() = 0;
+  virtual bool configure(const uint8_t* data, size_t length) = 0;
+  virtual const EyeSettings& settings() const = 0;
+  virtual bool renderOk() const = 0;
 
   /**
    * 中文：推进眼睛动画播放状态；应在主循环中周期性调用。

@@ -1,5 +1,7 @@
 # Wali Display System (ESP32-S3) / 瓦力显示系统
 
+> **实时眼睛 v1（2026-10-01）**：眼屏已改为可配置镜头渲染，支持三层颜色、大小、亮度、呼吸、移动和眨眼。串口命令、参数范围、构建与真机验证见 [实时眼睛文档](docs/realtime-eye.md)。下文原 GIF 描述保留为旧版架构记录；当前 `zoom` 为光核缩放，眼睛命令返回 `EYE:OK` / `EYE:ERR`。
+
 > **Triple-display firmware hub for the Wali multimodal interactive robot.**
 > Two synchronized circular eye displays + one main status screen, driven by a single ESP32-S3 over dual independent SPI buses. Communicates with a host SBC (RDK X3) through serial control and a persistent Wi-Fi/TCP camera-preview link.
 >
