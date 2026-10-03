@@ -13,6 +13,10 @@
 & 'C:\Users\Chessle\.platformio\penv\Scripts\platformio.exe' run -e esp32
 g++ -std=c++11 -Wall -Wextra -Werror -Isrc tools/test_eye_renderer.cpp src/domain/EyeRenderer.cpp -o test-eye.exe
 ./test-eye.exe
+g++ -std=c++11 -Wall -Wextra -Werror -Itools/serial_output_test -Isrc tools/test_serial_output.cpp -o test-serial-output.exe
+./test-serial-output.exe
+g++ -std=c++11 -Wall -Wextra -Werror -DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1 -Itools/serial_output_test -Isrc tools/test_serial_output.cpp -o test-serial-native.exe
+./test-serial-native.exe
 ```
 
 首次使用需烧录新固件，之后仅发送参数。烧录时按实际串口指定端口：
@@ -51,6 +55,25 @@ eyeaction:zoom
 成功响应 `EYE:OK` 表示参数已应用或动作已启动，下一次绘制使用新参数；不表示屏幕传输已结束。无效输入响应 `EYE:ERR:invalid_config`，整条拒绝。眼屏不可用时响应 `EYE:ERR:not_ready`。查询返回 `EYE:STATE:...`，包含全部参数与 `ready` 状态。
 
 参数只存 RAM，重启恢复默认，不写 Flash。建议一次发送一条命令、等待 ACK；滑块来源最多发送 10 次/秒并合并中间值。
+
+串口输出在现有互斥锁内完成整行写入与 `flush()`。native USB HWCDC
+按发送环形缓冲的连续段拆包，环绕后即使整行长度不是 64 的倍数，最后一个
+USB 包也可能恰好满 64 字节。驱动的软件缓冲排空不等于主机 bulk 读取结束；
+最后一包满长而没有短包/零长度包时，回包可能滞留到下一次输出。
+因此 native USB 分支额外等待软件缓冲/FIFO 排空，再发送零长度包结束传输，
+不增加串口文本。等待以 HWCDC 默认 100ms TX 超时为界，不新增连接、后台
+重发任务或命令重试；不保证主机断开时交付成功。普通串口分支不访问 USB 寄存器。
+
+在运行端停止常规串口服务后，可用上位机已有 `SerialBridge` 做真机回归：
+
+```bash
+python3 tools/test_eye_serial.py --host-project /root/wall-e-bt --count 300
+```
+
+该测试会改变眼睛配置，逐条等待 ACK，检查长状态回包、边界参数和非法输入的
+原子拒绝，最后恢复测试开始时的配置。超时直接失败，不重试；若恢复也失败，
+必须人工查询并恢复，不能把 `PASS` 单行当成最终成功（进程须以 0 退出且打印
+`RESTORED`）。不测试运动、音频或 Wi-Fi，也不打开第二条串口连接。
 
 | 字段 | 范围 | 默认 |
 |---|---|---|
