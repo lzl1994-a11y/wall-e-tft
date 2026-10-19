@@ -475,12 +475,18 @@ void St7789DisplayPort::showHostNetworkSetup(const HostNetworkScreen& screen) {
   gfx_->setTextColor(kYellow, kBlack);
   gfx_->setTextSize(2);
   gfx_->setCursor(12, 12);
-  gfx_->print("WIFI SETUP");
+  const bool done = strcmp(screen.state, "done") == 0;
+  const bool partial = strcmp(screen.state, "partial") == 0;
+  const bool syncing = strcmp(screen.state, "syncing") == 0;
+  const bool connecting = strcmp(screen.state, "connecting") == 0;
+  gfx_->print(done ? "WIFI READY" : partial ? "SYNC FAILED" : "WIFI SETUP");
   gfx_->setTextSize(1);
   gfx_->setTextColor(kWhite, kBlack);
   gfx_->setCursor(12, 44);
-  gfx_->print(screen.state);
-  const bool connected = strcmp(screen.state, "connected") == 0;
+  gfx_->print(done ? "Both devices connected" : partial ? "Host online; ESP32 pending" :
+              syncing ? "Syncing ESP32..." : connecting ? "Connecting to Wi-Fi..." :
+              strcmp(screen.state, "connected") == 0 ? "Wi-Fi connected" : "Choose Wi-Fi on your phone");
+  const bool connected = strcmp(screen.state, "connected") == 0 || syncing || partial || done;
   if (!connected) {
     gfx_->setCursor(12, 66);
     gfx_->print("Connect phone to hotspot:");
@@ -489,6 +495,11 @@ void St7789DisplayPort::showHostNetworkSetup(const HostNetworkScreen& screen) {
     gfx_->setCursor(12, 104);
     gfx_->print("Password: ");
     gfx_->print(screen.password);
+  } else {
+    gfx_->setCursor(12, 76);
+    gfx_->print("Host Wi-Fi connected");
+    gfx_->setCursor(12, 96);
+    gfx_->print(done ? "Setup complete" : partial ? "Open webpage to retry sync" : "Please wait for ESP32 sync");
   }
   gfx_->setCursor(12, 132);
   gfx_->print(connected ? "Join target Wi-Fi, open:" : "Open in phone browser:");
@@ -501,7 +512,8 @@ void St7789DisplayPort::showHostNetworkSetup(const HostNetworkScreen& screen) {
   gfx_->print("/wifi");
   gfx_->setTextSize(1);
   gfx_->setCursor(12, 218);
-  gfx_->print(connected ? "Syncing ESP32, please wait" : "No Internet needed");
+  gfx_->print(done ? "Returning to normal screen..." : partial ? "Tap Retry ESP32 on webpage" :
+              connected ? "Syncing ESP32, please wait" : connecting ? "Connecting, please wait" : "No Internet needed");
   frameDrawn_ = false;
   powerFrameDrawn_ = false;
   lastPowerThinBars_ = -1;

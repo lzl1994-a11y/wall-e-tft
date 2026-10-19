@@ -425,6 +425,7 @@ void AppController::loop() {
   }
 
   updateCameraState();
+  updateNetworkScreen();
   returnToPowerIfChatIdle();
   if (screenMode_ == ScreenMode::CameraStreaming) {
     taskYIELD();
@@ -579,6 +580,14 @@ void AppController::restoreScreenAfterCamera() {
   logger_.info("camera preview complete");
 }
 
+void AppController::updateNetworkScreen() {
+  if (screenMode_ != ScreenMode::NetworkSetup || strcmp(networkScreen_.state, "done") != 0 ||
+      millis() - networkDoneAtMs_ < 3000) return;
+  screenMode_ = ScreenMode::Power;
+  display_.showPower(powerPercent_);
+  display_.showNetworkHost(networkScreen_.ip, networkScreen_.port);
+}
+
 void AppController::processUiPacket(const InputPacket& packet) {
 
   if (startsWithIgnoreCase(packet.data, packet.length, "hostnet:")) {
@@ -587,14 +596,10 @@ void AppController::processUiPacket(const InputPacket& packet) {
     if (valid) {
       cameraHasFrame_ = false;
       cameraStreamPersistent_ = false;
-      if (strcmp(screen.state, "done") == 0) {
-        screenMode_ = ScreenMode::Power;
-        display_.showPower(powerPercent_);
-        display_.showNetworkHost(screen.ip, screen.port);
-      } else {
-        screenMode_ = ScreenMode::NetworkSetup;
-        display_.showHostNetworkSetup(screen);
-      }
+      networkScreen_ = screen;
+      networkDoneAtMs_ = millis();
+      screenMode_ = ScreenMode::NetworkSetup;
+      display_.showHostNetworkSetup(screen);
     }
     char response[80];
     snprintf(response, sizeof(response), "NETCFG:RESULT:%lu|HOSTSCREEN|%u|0",

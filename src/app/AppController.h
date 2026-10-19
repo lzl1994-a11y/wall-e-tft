@@ -83,6 +83,7 @@ class AppController {
   void processUiPacket(const InputPacket& packet);
   void processImageStream();
   void updateCameraState();
+  void updateNetworkScreen();
   void beginCameraStream(const ImageStreamEvent& event);
   void beginCameraHold();
   void restoreScreenAfterCamera();
@@ -143,6 +144,8 @@ class AppController {
   
   bool pca9685Rx_ = false;
   uint32_t bootMs_ = 0;
+  HostNetworkScreen networkScreen_;
+  uint32_t networkDoneAtMs_ = 0;
   QueueHandle_t uiMessageQueue_ = nullptr;
   TaskHandle_t controlTaskHandle_ = nullptr;
   bool controlTaskStarted_ = false;

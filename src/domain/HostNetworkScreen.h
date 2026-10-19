@@ -50,7 +50,8 @@ inline bool parseHostNetworkScreen(const uint8_t* data, size_t length, HostNetwo
       strlen(fields[3]) >= sizeof(out.ip) || strlen(fields[5]) >= sizeof(out.ssid) ||
       strlen(fields[6]) >= sizeof(out.password)) return false;
   if (strcmp(fields[2], "setup") && strcmp(fields[2], "connecting") &&
-      strcmp(fields[2], "connected") && strcmp(fields[2], "done")) return false;
+      strcmp(fields[2], "connected") && strcmp(fields[2], "syncing") &&
+      strcmp(fields[2], "partial") && strcmp(fields[2], "done")) return false;
   char ip[16];
   strcpy(ip, fields[3]);
   char* start = ip;

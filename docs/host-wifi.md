@@ -7,7 +7,8 @@ hostnet:<uint32_seq>|1|<state>|<IPv4>|<web_port>|<AP_SSID>|<AP_password>
 ```
 
 `state`：`setup` 显示热点和网页地址；`connecting` 保持配网屏；
-`connected` 显示新地址及等待同步提示；`done` 返回电量页。
+`connected` 显示新地址；`syncing` 明确显示 ESP32 同步中；
+`partial` 显示主机在线但同步未完成及重试地址；`done` 显示 `WIFI READY` 三秒后返回电量页。
 SSID/密码允许空字段，长度分别不超过 32/63 个 ASCII 字节。
 禁止字段分隔符、控制字符、超范围 IP、端口与序列号。
 
