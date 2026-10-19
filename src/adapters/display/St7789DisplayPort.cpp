@@ -468,6 +468,46 @@ void St7789DisplayPort::drawNetworkFooter() {
                           WallEConfig::kScreenHeight, nextY);
 }
 
+void St7789DisplayPort::showHostNetworkSetup(const HostNetworkScreen& screen) {
+  if (gfx_ == nullptr) return;
+  deselectSharedSpiDevices();
+  gfx_->fillScreen(kBlack);
+  gfx_->setTextColor(kYellow, kBlack);
+  gfx_->setTextSize(2);
+  gfx_->setCursor(12, 12);
+  gfx_->print("WIFI SETUP");
+  gfx_->setTextSize(1);
+  gfx_->setTextColor(kWhite, kBlack);
+  gfx_->setCursor(12, 44);
+  gfx_->print(screen.state);
+  const bool connected = strcmp(screen.state, "connected") == 0;
+  if (!connected) {
+    gfx_->setCursor(12, 66);
+    gfx_->print("Connect phone to hotspot:");
+    gfx_->setCursor(12, 84);
+    gfx_->print(screen.ssid);
+    gfx_->setCursor(12, 104);
+    gfx_->print("Password: ");
+    gfx_->print(screen.password);
+  }
+  gfx_->setCursor(12, 132);
+  gfx_->print(connected ? "Join target Wi-Fi, open:" : "Open in phone browser:");
+  gfx_->setCursor(12, 154);
+  gfx_->setTextSize(2);
+  gfx_->print(screen.ip);
+  gfx_->setCursor(12, 180);
+  gfx_->print(":");
+  gfx_->print(screen.port);
+  gfx_->print("/wifi");
+  gfx_->setTextSize(1);
+  gfx_->setCursor(12, 218);
+  gfx_->print(connected ? "Syncing ESP32, please wait" : "No Internet needed");
+  frameDrawn_ = false;
+  powerFrameDrawn_ = false;
+  lastPowerThinBars_ = -1;
+  deselectSharedSpiDevices();
+}
+
 void St7789DisplayPort::showCameraWaiting() {
   if (gfx_ == nullptr) {
     return;

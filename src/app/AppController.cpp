@@ -475,17 +475,18 @@ void AppController::processImageStream() {
       logger_.warn("image stream protocol error");
       return;
     case ImageStreamEventType::NetworkConfigConnected:
-      display_.showNetworkHost(event.host, event.port);
+      if (screenMode_ != ScreenMode::NetworkSetup) display_.showNetworkHost(event.host, event.port);
       logger_.info("ESP network configuration connected");
       return;
     case ImageStreamEventType::NetworkConfigFailed:
-      display_.showNetworkFailure();
+      if (screenMode_ != ScreenMode::NetworkSetup) display_.showNetworkFailure();
       logger_.warn("ESP network configuration failed");
       return;
   }
 }
 
 void AppController::beginCameraStream(const ImageStreamEvent& event) {
+  if (screenMode_ == ScreenMode::NetworkSetup) return;
   if (screenMode_ != ScreenMode::CameraStreaming &&
       screenMode_ != ScreenMode::CameraHold) {
     cameraReturnMode_ = screenMode_ == ScreenMode::Chat ? ScreenMode::Chat
@@ -579,6 +580,28 @@ void AppController::restoreScreenAfterCamera() {
 }
 
 void AppController::processUiPacket(const InputPacket& packet) {
+
+  if (startsWithIgnoreCase(packet.data, packet.length, "hostnet:")) {
+    HostNetworkScreen screen;
+    const bool valid = parseHostNetworkScreen(packet.data, packet.length, screen);
+    if (valid) {
+      cameraHasFrame_ = false;
+      cameraStreamPersistent_ = false;
+      if (strcmp(screen.state, "done") == 0) {
+        screenMode_ = ScreenMode::Power;
+        display_.showPower(powerPercent_);
+        display_.showNetworkHost(screen.ip, screen.port);
+      } else {
+        screenMode_ = ScreenMode::NetworkSetup;
+        display_.showHostNetworkSetup(screen);
+      }
+    }
+    char response[80];
+    snprintf(response, sizeof(response), "NETCFG:RESULT:%lu|HOSTSCREEN|%u|0",
+             static_cast<unsigned long>(screen.sequence), valid ? 0 : 3);
+    serialPrintln(response);
+    return;
+  }
 
   if (state_ != AppState::Ready) {
     logger_.warn("input dropped while not ready");
@@ -845,6 +868,7 @@ void AppController::setState(AppState state) {
 }
 
 void AppController::setChatOpen(bool open) {
+  if (screenMode_ == ScreenMode::NetworkSetup) return;
   if (screenMode_ == ScreenMode::CameraStreaming ||
       screenMode_ == ScreenMode::CameraHold) {
     cameraReturnMode_ = open ? ScreenMode::Chat : ScreenMode::Power;

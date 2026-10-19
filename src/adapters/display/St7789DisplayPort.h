@@ -54,6 +54,7 @@ class St7789DisplayPort : public IDisplayPort {
   void updatePower(uint8_t percent) override;
   void showNetworkFailure() override;
   void showNetworkHost(const char* host, uint16_t port) override;
+  void showHostNetworkSetup(const HostNetworkScreen& screen) override;
 
   /**
    * 中文：根据会话缓存重绘聊天区域，只显示能放进会话区域的最新消息。

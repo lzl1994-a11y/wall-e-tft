@@ -66,6 +66,7 @@ class AppController {
     Chat,
     CameraStreaming,
     CameraHold,
+    NetworkSetup,
   };
 
   /**

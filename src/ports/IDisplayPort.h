@@ -2,6 +2,7 @@
 
 #include "domain/AppState.h"
 #include "domain/ChatSession.h"
+#include "domain/HostNetworkScreen.h"
 
 namespace WallE {
 
@@ -72,6 +73,8 @@ class IDisplayPort {
 
   /** Shows the active host in the persistent power-screen footer. */
   virtual void showNetworkHost(const char* host, uint16_t port) = 0;
+
+  virtual void showHostNetworkSetup(const HostNetworkScreen& screen) = 0;
 
   /**
    * 中文：按当前会话内容重绘主屏聊天区域。
